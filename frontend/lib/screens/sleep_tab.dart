@@ -690,6 +690,7 @@ class _LoadHealthConnectButton extends StatelessWidget {
             color: AppColors.primary,
           ),
           shape: RoundedRectangleBorder(
+            // border
             borderRadius: BorderRadius.circular(14),
           ),
         ),
