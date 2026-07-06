@@ -5,6 +5,7 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/circular_score.dart';
 import '../widgets/common.dart';
+import '../services/health_connect_service.dart';
 
 class SleepTab extends StatelessWidget {
   final AppState state;
