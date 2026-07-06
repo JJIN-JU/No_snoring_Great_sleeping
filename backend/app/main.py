@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.database import check_db_connection
 
 app = FastAPI(
     title="ZZCare Sleep Snore API",
@@ -26,4 +27,13 @@ def root():
 def health_check():
     return {
         "status": "ok"
+    }
+
+@app.get("/db/health")
+def db_health_check():
+    is_connected = check_db_connection()
+
+    return {
+        "database": "MongoDB",
+        "connected": is_connected
     }
