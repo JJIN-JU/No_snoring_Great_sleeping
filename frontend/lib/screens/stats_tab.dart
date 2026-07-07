@@ -1,6 +1,9 @@
+import 'dart:math';
+
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+
 import '../models/sleep_data.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
@@ -8,7 +11,11 @@ import '../widgets/common.dart';
 
 class StatsTab extends StatefulWidget {
   final AppState state;
-  const StatsTab({super.key, required this.state});
+
+  const StatsTab({
+    super.key,
+    required this.state,
+  });
 
   @override
   State<StatsTab> createState() => _StatsTabState();
@@ -25,15 +32,17 @@ class _StatsTabState extends State<StatsTab> {
         const Padding(
           padding: EdgeInsets.only(top: 8, bottom: 16),
           child: Center(
-            child: Text('통계',
-                style: TextStyle(
-                    color: AppColors.foreground,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold)),
+            child: Text(
+              '통계',
+              style: TextStyle(
+                color: AppColors.foreground,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ),
 
-        // 일별 / 월별 토글
         Container(
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
@@ -48,6 +57,7 @@ class _StatsTabState extends State<StatsTab> {
             ],
           ),
         ),
+
         const SizedBox(height: 16),
 
         if (daily) ..._dailyCharts() else ..._monthlyCharts(),
@@ -79,29 +89,59 @@ class _StatsTabState extends State<StatsTab> {
     );
   }
 
-  // ---------- 일별 ----------
+  // =========================
+  // 일별 통계
+  // =========================
+
   List<Widget> _dailyCharts() {
-    // 최근 7일 (오래된 -> 최신 순서)
-    final recs = widget.state.records.reversed.toList();
-    final labels =
-        recs.map((r) => DateFormat('E', 'ko').format(r.date)).toList();
+    // 최신 기록이 너무 많이 쌓여도 최근 7개만 보여줌
+    final recs = widget.state.records.take(7).toList().reversed.toList();
+
+    final labels = recs
+        .map((r) => DateFormat('E', 'ko').format(r.date))
+        .toList();
+
+    final sleepHours = recs
+        .map((r) => _safeDouble(r.totalSleepHours))
+        .toList();
+
+    final noiseValues = recs
+        .map((r) => _safeDouble(r.noiseDb))
+        .toList();
+
+    final deficitValues = recs
+        .map((r) {
+          final deficit = r.sleepDeficitHours;
+          if (deficit.isNaN || deficit.isInfinite || deficit <= 0) {
+            return 0.0;
+          }
+          return double.parse(deficit.toStringAsFixed(1));
+        })
+        .toList();
 
     return [
       _chartCard(
         '일별 수면 점수',
-        _scoreBarChart(recs.map((r) => r.score).toList(), labels),
+        _scoreBarChart(
+          recs.map((r) => r.score.clamp(0, 100)).toList(),
+          labels,
+        ),
       ),
+
       const SizedBox(height: 16),
+
       _chartCard(
         '수면 시간 (시간)',
         _barChart(
-          recs.map((r) => r.totalSleepHours).toList(),
+          sleepHours,
           labels,
           AppColors.accent,
-          maxY: 10,
+          maxY: max(10, _niceMax(sleepHours)),
         ),
       ),
+
       const SizedBox(height: 16),
+
       _chartCard(
         '취침 · 기상 시각',
         _bedWakeChart(recs, labels),
@@ -110,74 +150,108 @@ class _StatsTabState extends State<StatsTab> {
           _LegendDot('기상', AppColors.gold),
         ],
       ),
+
       const SizedBox(height: 16),
+
       _chartCard(
         '소음 (dB)',
         _lineChart(
-          recs.map((r) => r.noiseDb).toList(),
+          noiseValues,
           labels,
           AppColors.pink,
-          maxY: 60,
+          maxY: max(60, _niceMax(noiseValues)),
         ),
       ),
+
       const SizedBox(height: 16),
+
       _chartCard(
         '부족 수면 (시간)',
         _barChart(
-          recs
-              .map((r) => r.sleepDeficitHours > 0 ? r.sleepDeficitHours : 0.0)
-              .toList(),
+          deficitValues,
           labels,
           AppColors.orange,
-          maxY: 3,
+          maxY: max(3, _niceMax(deficitValues)),
         ),
       ),
     ];
   }
 
-  // ---------- 월별 ----------
+  // =========================
+  // 월별 통계
+  // =========================
+
   List<Widget> _monthlyCharts() {
     final labels = monthlyRecords.map((m) => m.label).toList();
+
+    final sleepValues = monthlyRecords
+        .map((m) => _safeDouble(m.avgSleepHours))
+        .toList();
+
+    final noiseValues = monthlyRecords
+        .map((m) => _safeDouble(m.avgNoiseDb))
+        .toList();
+
+    final deficitValues = monthlyRecords
+        .map((m) => _safeDouble(m.avgDeficitHours))
+        .toList();
+
     return [
       _chartCard(
         '월별 평균 수면 점수',
-        _scoreBarChart(monthlyRecords.map((m) => m.avgScore).toList(), labels),
+        _scoreBarChart(
+          monthlyRecords.map((m) => m.avgScore.clamp(0, 100)).toList(),
+          labels,
+        ),
       ),
+
       const SizedBox(height: 16),
+
       _chartCard(
         '월평균 수면 시간 (시간)',
         _barChart(
-          monthlyRecords.map((m) => m.avgSleepHours).toList(),
+          sleepValues,
           labels,
           AppColors.accent,
-          maxY: 10,
+          maxY: max(10, _niceMax(sleepValues)),
         ),
       ),
+
       const SizedBox(height: 16),
+
       _chartCard(
         '월평균 소음 (dB)',
         _lineChart(
-          monthlyRecords.map((m) => m.avgNoiseDb).toList(),
+          noiseValues,
           labels,
           AppColors.pink,
-          maxY: 60,
+          maxY: max(60, _niceMax(noiseValues)),
         ),
       ),
+
       const SizedBox(height: 16),
+
       _chartCard(
         '월평균 부족 수면 (시간)',
         _barChart(
-          monthlyRecords.map((m) => m.avgDeficitHours).toList(),
+          deficitValues,
           labels,
           AppColors.orange,
-          maxY: 3,
+          maxY: max(3, _niceMax(deficitValues)),
         ),
       ),
     ];
   }
 
-  // ---------- 차트 빌더 ----------
-  Widget _chartCard(String title, Widget chart, {List<Widget>? legend}) {
+  // =========================
+  // 차트 카드
+  // =========================
+
+  Widget _chartCard(
+    String title,
+    Widget chart, {
+    List<Widget>? legend,
+  }) {
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -189,87 +263,137 @@ class _StatsTabState extends State<StatsTab> {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    for (final l in legend) ...[l, const SizedBox(width: 10)]
+                    for (final l in legend) ...[
+                      l,
+                      const SizedBox(width: 10),
+                    ],
                   ],
                 ),
             ],
           ),
-          SizedBox(height: 180, child: chart),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 180,
+            child: chart,
+          ),
         ],
       ),
     );
   }
 
+  // =========================
+  // 점수 막대 차트
+  // =========================
+
   Widget _scoreBarChart(List<int> scores, List<String> labels) {
     return BarChart(
       BarChartData(
+        minY: 0,
         maxY: 100,
         gridData: _grid(20),
         titlesData: _titles(labels, 20),
         borderData: FlBorderData(show: false),
         barGroups: [
           for (var i = 0; i < scores.length; i++)
-            BarChartGroupData(x: i, barRods: [
-              BarChartRodData(
-                toY: scores[i].toDouble(),
-                color: ScoreGrade.of(scores[i]).color,
-                width: 14,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ]),
+            BarChartGroupData(
+              x: i,
+              barRods: [
+                BarChartRodData(
+                  toY: scores[i].toDouble().clamp(0, 100),
+                  color: ScoreGrade.of(scores[i]).color,
+                  width: 14,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ],
+            ),
         ],
       ),
     );
   }
 
-  Widget _barChart(List<double> vals, List<String> labels, Color color,
-      {required double maxY}) {
+  // =========================
+  // 일반 막대 차트
+  // =========================
+
+  Widget _barChart(
+    List<double> vals,
+    List<String> labels,
+    Color color, {
+    required double maxY,
+  }) {
+    final safeMaxY = max(1.0, maxY);
+    final interval = max(1.0, safeMaxY / 5);
+
     return BarChart(
       BarChartData(
-        maxY: maxY,
-        gridData: _grid(maxY / 5),
-        titlesData: _titles(labels, maxY / 5),
+        minY: 0,
+        maxY: safeMaxY,
+        gridData: _grid(interval),
+        titlesData: _titles(labels, interval),
         borderData: FlBorderData(show: false),
         barGroups: [
           for (var i = 0; i < vals.length; i++)
-            BarChartGroupData(x: i, barRods: [
-              BarChartRodData(
-                toY: vals[i],
-                color: color,
-                width: 14,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ]),
+            BarChartGroupData(
+              x: i,
+              barRods: [
+                BarChartRodData(
+                  toY: _safeDouble(vals[i]).clamp(0, safeMaxY),
+                  color: color,
+                  width: 14,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ],
+            ),
         ],
       ),
     );
   }
 
-  Widget _lineChart(List<double> vals, List<String> labels, Color color,
-      {required double maxY}) {
+  // =========================
+  // 선 차트
+  // =========================
+
+  Widget _lineChart(
+    List<double> vals,
+    List<String> labels,
+    Color color, {
+    required double maxY,
+  }) {
+    final safeMaxY = max(1.0, maxY);
+    final interval = max(1.0, safeMaxY / 5);
+
     return LineChart(
       LineChartData(
         minY: 0,
-        maxY: maxY,
-        gridData: _grid(maxY / 5),
-        titlesData: _titles(labels, maxY / 5),
+        maxY: safeMaxY,
+        gridData: _grid(interval),
+        titlesData: _titles(labels, interval),
         borderData: FlBorderData(show: false),
         lineBarsData: [
           LineChartBarData(
             spots: [
-              for (var i = 0; i < vals.length; i++) FlSpot(i.toDouble(), vals[i])
+              for (var i = 0; i < vals.length; i++)
+                FlSpot(
+                  i.toDouble(),
+                  _safeDouble(vals[i]).clamp(0, safeMaxY),
+                ),
             ],
             isCurved: true,
             color: color,
             barWidth: 3,
             dotData: FlDotData(
               show: true,
-              getDotPainter: (s, _, __, ___) => FlDotCirclePainter(
-                  radius: 3, color: color, strokeWidth: 0),
+              getDotPainter: (s, _, __, ___) {
+                return FlDotCirclePainter(
+                  radius: 3,
+                  color: color,
+                  strokeWidth: 0,
+                );
+              },
             ),
             belowBarData: BarAreaData(
               show: true,
-              color: color.withOpacity(0.12),
+              color: color.withValues(alpha: 0.12),
             ),
           ),
         ],
@@ -277,18 +401,27 @@ class _StatsTabState extends State<StatsTab> {
     );
   }
 
+  // =========================
+  // 취침 / 기상 시각 차트
+  // =========================
+
   Widget _bedWakeChart(List<SleepRecord> recs, List<String> labels) {
-    // 취침(전날 밤 기준 음수 시프트) 및 기상 시간을 시(hour) 단위로 표시
     double bedHour(String t) {
-      final p = t.split(':');
-      var h = int.parse(p[0]) + int.parse(p[1]) / 60;
-      if (h > 12) h -= 24; // 자정 넘김 표현 (예: 23:40 -> -0.33)
+      final parsed = _parseHour(t);
+
+      if (parsed == null) return 0;
+
+      var h = parsed;
+
+      if (h > 12) {
+        h -= 24;
+      }
+
       return h;
     }
 
     double wakeHour(String t) {
-      final p = t.split(':');
-      return int.parse(p[0]) + int.parse(p[1]) / 60;
+      return _parseHour(t) ?? 0;
     }
 
     return LineChart(
@@ -297,21 +430,32 @@ class _StatsTabState extends State<StatsTab> {
         maxY: 9,
         gridData: _grid(3),
         titlesData: FlTitlesData(
-          topTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           leftTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
               reservedSize: 34,
               interval: 3,
               getTitlesWidget: (v, _) {
+                if (v.isNaN || v.isInfinite) {
+                  return const SizedBox.shrink();
+                }
+
                 final h = v.toInt();
                 final label = h < 0 ? '${24 + h}시' : '$h시';
-                return Text(label,
-                    style:
-                        const TextStyle(color: AppColors.muted, fontSize: 9));
+
+                return Text(
+                  label,
+                  style: const TextStyle(
+                    color: AppColors.muted,
+                    fontSize: 9,
+                  ),
+                );
               },
             ),
           ),
@@ -322,7 +466,10 @@ class _StatsTabState extends State<StatsTab> {
           LineChartBarData(
             spots: [
               for (var i = 0; i < recs.length; i++)
-                FlSpot(i.toDouble(), bedHour(recs[i].bedtimeActual))
+                FlSpot(
+                  i.toDouble(),
+                  bedHour(recs[i].bedtimeActual),
+                ),
             ],
             isCurved: true,
             color: AppColors.primary,
@@ -332,7 +479,10 @@ class _StatsTabState extends State<StatsTab> {
           LineChartBarData(
             spots: [
               for (var i = 0; i < recs.length; i++)
-                FlSpot(i.toDouble(), wakeHour(recs[i].wakeActual))
+                FlSpot(
+                  i.toDouble(),
+                  wakeHour(recs[i].wakeActual),
+                ),
             ],
             isCurved: true,
             color: AppColors.gold,
@@ -344,54 +494,154 @@ class _StatsTabState extends State<StatsTab> {
     );
   }
 
-  FlGridData _grid(double interval) => FlGridData(
-        show: true,
-        drawVerticalLine: false,
-        horizontalInterval: interval <= 0 ? 1 : interval,
-        getDrawingHorizontalLine: (v) =>
-            const FlLine(color: AppColors.border, strokeWidth: 1),
-      );
+  // =========================
+  // 공통 설정
+  // =========================
 
-  FlTitlesData _titles(List<String> labels, double interval) => FlTitlesData(
-        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        rightTitles:
-            const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        leftTitles: AxisTitles(
-          sideTitles: SideTitles(
-            showTitles: true,
-            reservedSize: 30,
-            interval: interval <= 0 ? 1 : interval,
-            getTitlesWidget: (v, _) => Text(
-              v % 1 == 0 ? '${v.toInt()}' : v.toStringAsFixed(0),
-              style: const TextStyle(color: AppColors.muted, fontSize: 9),
-            ),
-          ),
-        ),
-        bottomTitles: _bottom(labels),
-      );
+  FlGridData _grid(double interval) {
+    return FlGridData(
+      show: true,
+      drawVerticalLine: false,
+      horizontalInterval: interval <= 0 ? 1 : interval,
+      getDrawingHorizontalLine: (v) {
+        return const FlLine(
+          color: AppColors.border,
+          strokeWidth: 1,
+        );
+      },
+    );
+  }
 
-  AxisTitles _bottom(List<String> labels) => AxisTitles(
+  FlTitlesData _titles(List<String> labels, double interval) {
+    return FlTitlesData(
+      topTitles: const AxisTitles(
+        sideTitles: SideTitles(showTitles: false),
+      ),
+      rightTitles: const AxisTitles(
+        sideTitles: SideTitles(showTitles: false),
+      ),
+      leftTitles: AxisTitles(
         sideTitles: SideTitles(
           showTitles: true,
-          reservedSize: 24,
-          interval: 1,
+          reservedSize: 34,
+          interval: interval <= 0 ? 1 : interval,
           getTitlesWidget: (v, _) {
-            final i = v.toInt();
-            if (i < 0 || i >= labels.length) return const SizedBox.shrink();
-            return Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(labels[i],
-                  style: const TextStyle(color: AppColors.muted, fontSize: 10)),
+            if (v.isNaN || v.isInfinite) {
+              return const SizedBox.shrink();
+            }
+
+            final text = v % 1 == 0
+                ? '${v.toInt()}'
+                : v.toStringAsFixed(1);
+
+            return Text(
+              text,
+              style: const TextStyle(
+                color: AppColors.muted,
+                fontSize: 9,
+              ),
             );
           },
         ),
-      );
+      ),
+      bottomTitles: _bottom(labels),
+    );
+  }
+
+  AxisTitles _bottom(List<String> labels) {
+    return AxisTitles(
+      sideTitles: SideTitles(
+        showTitles: true,
+        reservedSize: 24,
+        interval: 1,
+        getTitlesWidget: (v, _) {
+          if (v.isNaN || v.isInfinite) {
+            return const SizedBox.shrink();
+          }
+
+          final i = v.toInt();
+
+          if (i < 0 || i >= labels.length) {
+            return const SizedBox.shrink();
+          }
+
+          return Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              labels[i],
+              style: const TextStyle(
+                color: AppColors.muted,
+                fontSize: 10,
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // =========================
+  // 유틸
+  // =========================
+
+  double _safeDouble(double value) {
+    if (value.isNaN || value.isInfinite) {
+      return 0;
+    }
+
+    return value;
+  }
+
+  double _niceMax(List<double> values) {
+    if (values.isEmpty) return 1;
+
+    final cleanValues = values
+        .map(_safeDouble)
+        .where((v) => v > 0)
+        .toList();
+
+    if (cleanValues.isEmpty) return 1;
+
+    final maxValue = cleanValues.reduce(max);
+
+    if (maxValue <= 1) return 1;
+    if (maxValue <= 3) return 3;
+    if (maxValue <= 5) return 5;
+    if (maxValue <= 8) return 8;
+    if (maxValue <= 10) return 10;
+    if (maxValue <= 20) return 20;
+    if (maxValue <= 40) return 40;
+    if (maxValue <= 60) return 60;
+    if (maxValue <= 80) return 80;
+    if (maxValue <= 100) return 100;
+
+    return ((maxValue / 50).ceil() * 50).toDouble();
+  }
+
+  double? _parseHour(String time) {
+    final parts = time.split(':');
+
+    if (parts.length != 2) {
+      return null;
+    }
+
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+
+    if (hour == null || minute == null) {
+      return null;
+    }
+
+    return hour + minute / 60;
+  }
 }
 
 class _LegendDot extends StatelessWidget {
   final String label;
   final Color color;
+
   const _LegendDot(this.label, this.color);
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -400,12 +650,19 @@ class _LegendDot extends StatelessWidget {
         Container(
           width: 8,
           height: 8,
-          decoration:
-              BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(2),
+          ),
         ),
         const SizedBox(width: 4),
-        Text(label,
-            style: const TextStyle(color: AppColors.muted, fontSize: 11)),
+        Text(
+          label,
+          style: const TextStyle(
+            color: AppColors.muted,
+            fontSize: 11,
+          ),
+        ),
       ],
     );
   }
