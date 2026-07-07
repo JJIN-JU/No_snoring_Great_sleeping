@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/sleep_data.dart';
+import '../services/auth_api_service.dart';
 import '../services/health_connect_service.dart';
 import '../services/kakao_auth_service.dart';
 import '../services/snore_measure_service.dart';
@@ -18,6 +19,9 @@ class AppState extends ChangeNotifier {
 
   bool loginLoading = false;
   String? loginError;
+
+  // MongoDB users 컬렉션의 _id
+  String? userId;
 
   String? kakaoId;
   String? kakaoEmail;
@@ -85,7 +89,7 @@ class AppState extends ChangeNotifier {
   bool get canGoNext => selectedIndex > 0;
 
   // =========================
-  // 카카오 로그인
+  // 카카오 로그인 + DB 저장
   // =========================
 
   Future<void> loginWithKakao() async {
@@ -96,24 +100,45 @@ class AppState extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final result = await KakaoAuthService().login();
+      // 1. 카카오 로그인
+      final kakaoResult = await KakaoAuthService().login();
+
+      // 2. 카카오 사용자 정보를 FastAPI 서버로 전송
+      // 3. FastAPI가 MongoDB users 컬렉션에 저장 또는 업데이트
+      // 4. 저장된 user_id 반환
+      final savedUser = await AuthApiService().saveKakaoUser(kakaoResult);
 
       loggedIn = true;
-      kakaoId = result.kakaoId;
-      kakaoEmail = result.email;
-      profileImageUrl = result.profileImageUrl;
-      kakaoAccessToken = result.accessToken;
-      userName = result.nickname?.isNotEmpty == true
-          ? result.nickname!
-          : '카카오 사용자';
+
+      userId = savedUser.userId;
+      kakaoId = savedUser.kakaoId;
+      kakaoEmail = savedUser.email;
+      profileImageUrl = savedUser.profileImageUrl;
+
+      // 토큰은 앱 내부 로그인 상태 확인용으로만 보관
+      // DB에는 저장하지 않음
+      kakaoAccessToken = kakaoResult.accessToken;
+
+      userName = savedUser.nickname?.isNotEmpty == true
+          ? savedUser.nickname!
+          : kakaoResult.nickname?.isNotEmpty == true
+              ? kakaoResult.nickname!
+              : '카카오 사용자';
     } catch (e) {
       loginError = e.toString();
       loggedIn = false;
+
+      userId = null;
+      kakaoId = null;
+      kakaoEmail = null;
+      profileImageUrl = null;
+      kakaoAccessToken = null;
     } finally {
       loginLoading = false;
       notifyListeners();
     }
   }
+
   Future<void> logout() async {
     try {
       await KakaoAuthService().logout();
@@ -121,19 +146,8 @@ class AppState extends ChangeNotifier {
       // 카카오 로그아웃 실패해도 앱 내부에서는 로그아웃 처리
     }
 
-    loggedIn = false;
-    //selectedIndex = 0;
-
-    kakaoId = null;
-    kakaoEmail = null;
-    profileImageUrl = null;
-    kakaoAccessToken = null;
-    loginError = null;
-
+    _clearLoginState();
     notifyListeners();
-
-    // 로그인 직후 Health Connect 수면 데이터를 자동으로 동기화한다.
-    loadHealthConnectSleep();
   }
 
   Future<void> withdraw() async {
@@ -143,17 +157,10 @@ class AppState extends ChangeNotifier {
       // 카카오 연결 해제 실패해도 앱 내부 상태는 초기화
     }
 
-    loggedIn = false;
-    kakaoId = null;
-    kakaoEmail = null;
-    profileImageUrl = null;
-    kakaoAccessToken = null;
-    loginError = null;
-    userName = '홍길동';
-
+    _clearLoginState();
     notifyListeners();
   }
-  
+
   void _clearLoginState() {
     loggedIn = false;
     loginLoading = false;
@@ -161,6 +168,7 @@ class AppState extends ChangeNotifier {
 
     userName = '홍길동';
 
+    userId = null;
     kakaoId = null;
     kakaoEmail = null;
     profileImageUrl = null;
@@ -308,13 +316,6 @@ class AppState extends ChangeNotifier {
       lastHealthSyncAt = DateTime.now();
     } catch (e) {
       healthError = e.toString();
-
-      // Health Connect를 아예 처음 못 불러온 경우, 빈 화면 대신
-      // 0/기본값으로 채운 레코드를 넣어서 페이지 자체는 정상적으로 뜨게 한다.
-      if (_records.isEmpty) {
-        _records.addAll(_fallbackRecords(nights));
-        selectedIndex = 0;
-      }
     } finally {
       healthLoading = false;
       notifyListeners();
@@ -401,7 +402,6 @@ class AppState extends ChangeNotifier {
         wakeActual: _formatTime(end),
 
         // 수면 시간은 Health Connect 값이 아니므로 0으로 둠
-        // 수면 데이터를 원하면 Health Connect 불러오기를 먼저 해야 함
         totalSleepHours: 0,
         targetSleepHours: _parseHours(bedtimeTarget, wakeTarget),
 
@@ -463,7 +463,9 @@ class AppState extends ChangeNotifier {
     return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
 
-  static String _dateKey(DateTime d) => '${d.year}-${d.month}-${d.day}';
+  static bool _isSameDate(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
 
   static Color _stageColor(String name) {
     if (name.contains('깊')) return AppColors.primary;

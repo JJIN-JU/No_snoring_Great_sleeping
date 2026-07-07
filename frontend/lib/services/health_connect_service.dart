@@ -1,5 +1,4 @@
 import 'package:health/health.dart';
-import 'package:flutter/foundation.dart';
 
 class HealthSleepStage {
   final String name;
@@ -12,14 +11,12 @@ class HealthSleepStage {
 }
 
 class HealthSleepSummary {
-  final DateTime date; // 이 밤이 속한 날짜 (기상일 기준 자정)
   final DateTime? bedtime;
   final DateTime? wakeTime;
   final double totalSleepMinutes;
   final List<HealthSleepStage> stages;
 
   const HealthSleepSummary({
-    required this.date,
     required this.bedtime,
     required this.wakeTime,
     required this.totalSleepMinutes,
@@ -44,32 +41,16 @@ class HealthConnectService {
 
     final granted = await _health.requestAuthorization(
       _sleepTypes,
-      permissions: _sleepTypes.map((type) => HealthDataAccess.READ).toList(),
+      permissions: _sleepTypes
+          .map((type) => HealthDataAccess.READ)
+          .toList(),
     );
 
     return granted;
   }
 
-  /// 어젯밤 하루치만 필요할 때 쓰는 편의 메서드.
-  /// 내부적으로 [fetchSleepHistory]의 1일치 결과를 그대로 반환한다.
   Future<HealthSleepSummary> fetchLastNightSleep() async {
-    final history = await fetchSleepHistory(nights: 1);
-    return history.first;
-  }
-
-  /// 최근 [nights]일치 수면 데이터를 하루 단위로 묶어서 반환한다.
-  /// 반환 리스트의 index 0 = 가장 최근 밤(어젯밤), index 1 = 그 하루 전... 순서.
-  Future<List<HealthSleepSummary>> fetchSleepHistory({int nights = 7}) async {
     await _health.configure();
-
-    final now = DateTime.now();
-    final todayMidnight = DateTime(now.year, now.month, now.day);
-
-    // 각 "밤"은 전날 18시 ~ 당일 12시로 정의한다 (자정 넘어 잔 수면 포함).
-    // 조회는 가장 오래된 밤의 시작부터 가장 최근 밤의 끝까지 한 번에 수행한다.
-    final overallStart =
-        todayMidnight.subtract(Duration(days: nights - 1, hours: 6));
-    final overallEnd = todayMidnight.add(const Duration(hours: 12));
 
     final granted = await requestSleepPermission();
 
@@ -79,41 +60,65 @@ class HealthConnectService {
 
     final now = DateTime.now();
 
-    // 기존: 어제 18시 ~ 오늘 12시
-    // 변경: 최근 30일 전체 조회
+    // 최근 30일 전체 조회
     final start = now.subtract(const Duration(days: 30));
     final end = now.add(const Duration(minutes: 1));
 
     var points = await _health.getHealthDataFromTypes(
       types: _sleepTypes,
-      startTime: overallStart,
-      endTime: overallEnd,
+      startTime: start,
+      endTime: end,
     );
 
     points = _health.removeDuplicates(points);
 
-    final results = <HealthSleepSummary>[];
-
-    for (var i = 0; i < nights; i++) {
-      final targetMidnight = todayMidnight.subtract(Duration(days: i));
-      final nightStart = targetMidnight.subtract(const Duration(hours: 6));
-      final nightEnd = targetMidnight.add(const Duration(hours: 12));
-
-      final nightPoints = points
-          .where((p) =>
-              p.dateFrom.isBefore(nightEnd) && p.dateTo.isAfter(nightStart))
-          .toList();
-
-      results.add(_summarize(targetMidnight, nightPoints));
+    if (points.isEmpty) {
+      throw Exception(
+        '최근 30일 Health Connect에 수면 데이터가 없습니다. 삼성 헬스에서 Health Connect 동기화를 먼저 확인해 주세요.',
+      );
     }
 
-    return results;
-  }
+    // 가장 최근 수면 세션 찾기
+    final sessionPoints = points
+        .where((point) => point.type == HealthDataType.SLEEP_SESSION)
+        .toList();
 
-  HealthSleepSummary _summarize(
-    DateTime date,
-    List<HealthDataPoint> points,
-  ) {
+    DateTime windowStart;
+    DateTime windowEnd;
+
+    if (sessionPoints.isNotEmpty) {
+      sessionPoints.sort((a, b) => b.dateTo.compareTo(a.dateTo));
+
+      final latestSession = sessionPoints.first;
+
+      windowStart = latestSession.dateFrom;
+      windowEnd = latestSession.dateTo;
+    } else {
+      // SLEEP_SESSION이 없으면 가장 최근 수면 단계 기준으로 묶기
+      final sortedPoints = [...points]
+        ..sort((a, b) => b.dateTo.compareTo(a.dateTo));
+
+      final latestPoint = sortedPoints.first;
+
+      windowEnd = latestPoint.dateTo;
+      windowStart = windowEnd.subtract(const Duration(hours: 18));
+    }
+
+    final relatedPoints = points.where((point) {
+      return _overlaps(
+        point.dateFrom,
+        point.dateTo,
+        windowStart,
+        windowEnd,
+      );
+    }).toList();
+
+    if (relatedPoints.isEmpty) {
+      throw Exception(
+        '최근 수면 기록을 찾았지만 세부 데이터를 불러오지 못했습니다.',
+      );
+    }
+
     DateTime? bedtime;
     DateTime? wakeTime;
 
@@ -174,7 +179,7 @@ class HealthConnectService {
       }
     }
 
-    // SLEEP_SESSION이 있으면 취침/기상은 세션 기준으로 고정
+    // SLEEP_SESSION이 있으면 취침/기상 시간은 세션 기준으로 고정
     if (sessionPoints.isNotEmpty) {
       bedtime = windowStart;
       wakeTime = windowEnd;
@@ -205,7 +210,6 @@ class HealthConnectService {
     }
 
     return HealthSleepSummary(
-      date: date,
       bedtime: bedtime,
       wakeTime: wakeTime,
       totalSleepMinutes: totalSleepMinutes,
