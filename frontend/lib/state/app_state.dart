@@ -231,7 +231,7 @@ class AppState extends ChangeNotifier {
   // Health Connect 수면 데이터 불러오기
   // =========================
 
-  Future<void> loadHealthConnectSleep() async {
+  Future<void> loadHealthConnectSleep({int nights = 7}) async {
     if (healthLoading) return;
 
     healthLoading = true;
@@ -240,77 +240,74 @@ class AppState extends ChangeNotifier {
 
     try {
       final service = HealthConnectService();
-      final result = await service.fetchLastNightSleep();
-
-      final hasSleepTime = result.totalSleepMinutes > 0;
-      final hasBedWake = result.bedtime != null || result.wakeTime != null;
-      final hasStages = result.stages.isNotEmpty;
-
-      if (!hasSleepTime && !hasBedWake && !hasStages) {
-        throw Exception(
-          'Health Connect에 불러올 수면 데이터가 없습니다. 삼성 헬스에서 Health Connect 동기화를 먼저 확인해 주세요.',
-        );
-      }
-
-      final totalSleepHours = double.parse(
-        (result.totalSleepMinutes / 60).toStringAsFixed(1),
-      );
+      final history = await service.fetchSleepHistory(nights: nights);
 
       final targetHours = _parseHours(bedtimeTarget, wakeTarget);
 
-      final old = _records.isEmpty ? _emptyRecord() : current;
+      // 같은 날짜의 기존 레코드가 있다면(폰 마이크로 측정한 코골이 값 등)
+      // 코골이 관련 필드는 최대한 유지한다.
+      final oldByDate = <String, SleepRecord>{
+        for (final r in _records) _dateKey(r.date): r,
+      };
 
-      final bedtimeActual = result.bedtime == null
-          ? old.bedtimeActual
-          : _formatTime(result.bedtime!);
+      final newRecords = history.map((result) {
+        final old = oldByDate[_dateKey(result.date)];
 
-      final wakeActual = result.wakeTime == null
-          ? old.wakeActual
-          : _formatTime(result.wakeTime!);
+        final totalSleepHours = double.parse(
+          (result.totalSleepMinutes / 60).toStringAsFixed(1),
+        );
 
-      final stages = result.stages.isEmpty
-          ? old.stages
-          : result.stages.map((stage) {
-              return SleepStage(
-                stage.name,
-                stage.minutes,
-                _stageColor(stage.name),
-              );
-            }).toList();
+        final bedtimeActual = result.bedtime == null
+            ? (old?.bedtimeActual ?? bedtimeTarget)
+            : _formatTime(result.bedtime!);
 
-      final score = _calculateSleepScore(
-        totalSleepHours: totalSleepHours,
-        targetSleepHours: targetHours,
-        stages: stages,
-      );
+        final wakeActual = result.wakeTime == null
+            ? (old?.wakeActual ?? wakeTarget)
+            : _formatTime(result.wakeTime!);
 
-      final updatedRecord = SleepRecord(
-        date: DateTime.now(),
-        score: score,
-        bedtimeTarget: bedtimeTarget,
-        wakeTarget: wakeTarget,
-        bedtimeActual: bedtimeActual,
-        wakeActual: wakeActual,
-        totalSleepHours: totalSleepHours,
-        targetSleepHours: targetHours,
+        final stages = result.stages.isNotEmpty
+            ? result.stages.map((stage) {
+                return SleepStage(
+                  stage.name,
+                  stage.minutes,
+                  _stageColor(stage.name),
+                );
+              }).toList()
+            : (old?.stages ?? const <SleepStage>[]);
 
-        // 코골이/소음 값은 Health Connect가 아니라 폰 마이크 측정값 유지
-        avgSnoreDb: old.avgSnoreDb,
-        maxSnoreDb: old.maxSnoreDb,
-        snoreHours: old.snoreHours,
-        snoreFreqHz: old.snoreFreqHz,
-        snoreCount: old.snoreCount,
-        noiseDb: old.noiseDb,
-        snoreTimeline: old.snoreTimeline,
+        final score = _calculateSleepScore(
+          totalSleepHours: totalSleepHours,
+          targetSleepHours: targetHours,
+          stages: stages,
+        );
 
-        stages: stages,
-      );
+        return SleepRecord(
+          date: result.date,
+          score: score,
+          bedtimeTarget: bedtimeTarget,
+          wakeTarget: wakeTarget,
+          bedtimeActual: bedtimeActual,
+          wakeActual: wakeActual,
+          totalSleepHours: totalSleepHours,
+          targetSleepHours: targetHours,
 
-      if (_records.isNotEmpty && _isSameDate(_records[0].date, DateTime.now())) {
-        _records[0] = updatedRecord;
-      } else {
-        _records.insert(0, updatedRecord);
-      }
+          // 코골이/소음 값은 Health Connect가 아니라 폰 마이크 측정값 유지
+          avgSnoreDb: old?.avgSnoreDb ?? 0,
+          maxSnoreDb: old?.maxSnoreDb ?? 0,
+          snoreHours: old?.snoreHours ?? 0,
+          snoreFreqHz: old?.snoreFreqHz ?? 0,
+          snoreCount: old?.snoreCount ?? 0,
+          noiseDb: old?.noiseDb ?? 0,
+          snoreTimeline: old?.snoreTimeline ?? const [],
+
+          stages: stages,
+        );
+      }).toList();
+
+      // history는 이미 최신 -> 과거 순으로 정렬돼 있으므로 그대로 교체한다.
+      _records
+        ..clear()
+        ..addAll(newRecords);
 
       selectedIndex = 0;
       lastHealthSyncAt = DateTime.now();
@@ -463,9 +460,7 @@ class AppState extends ChangeNotifier {
     return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
 
-  static bool _isSameDate(DateTime a, DateTime b) {
-    return a.year == b.year && a.month == b.month && a.day == b.day;
-  }
+  static String _dateKey(DateTime d) => '${d.year}-${d.month}-${d.day}';
 
   static Color _stageColor(String name) {
     if (name.contains('깊')) return AppColors.primary;
