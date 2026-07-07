@@ -131,6 +131,9 @@ class AppState extends ChangeNotifier {
     loginError = null;
 
     notifyListeners();
+
+    // 로그인 직후 Health Connect 수면 데이터를 자동으로 동기화한다.
+    loadHealthConnectSleep();
   }
 
   Future<void> withdraw() async {
@@ -305,6 +308,13 @@ class AppState extends ChangeNotifier {
       lastHealthSyncAt = DateTime.now();
     } catch (e) {
       healthError = e.toString();
+
+      // Health Connect를 아예 처음 못 불러온 경우, 빈 화면 대신
+      // 0/기본값으로 채운 레코드를 넣어서 페이지 자체는 정상적으로 뜨게 한다.
+      if (_records.isEmpty) {
+        _records.addAll(_fallbackRecords(nights));
+        selectedIndex = 0;
+      }
     } finally {
       healthLoading = false;
       notifyListeners();
@@ -453,9 +463,7 @@ class AppState extends ChangeNotifier {
     return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
 
-  static bool _isSameDate(DateTime a, DateTime b) {
-    return a.year == b.year && a.month == b.month && a.day == b.day;
-  }
+  static String _dateKey(DateTime d) => '${d.year}-${d.month}-${d.day}';
 
   static Color _stageColor(String name) {
     if (name.contains('깊')) return AppColors.primary;

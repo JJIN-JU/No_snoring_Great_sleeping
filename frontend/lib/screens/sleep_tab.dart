@@ -30,12 +30,8 @@ class SleepTab extends StatelessWidget {
       children: [
         _DateHeader(state: state),
         const SizedBox(height: 16),
-
-        if (state.lastHealthSyncAt != null) ...[
-          _HealthSyncInfo(state: state),
-          const SizedBox(height: 16),
-        ],
-
+        _HealthSyncInfo(state: state),
+        const SizedBox(height: 16),
         AppCard(
           child: Column(
             children: [
@@ -45,7 +41,6 @@ class SleepTab extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-
         AppCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -111,7 +106,6 @@ class SleepTab extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-
         AppCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -155,9 +149,7 @@ class SleepTab extends StatelessWidget {
                   _miniStat('목표 수면', _fmt(r.targetSleepHours)),
                   _miniStat(
                     '부족',
-                    r.sleepDeficitHours > 0
-                        ? _fmt(r.sleepDeficitHours)
-                        : '없음',
+                    r.sleepDeficitHours > 0 ? _fmt(r.sleepDeficitHours) : '없음',
                     color: r.sleepDeficitHours > 0
                         ? AppColors.orange
                         : AppColors.accent,
@@ -168,7 +160,6 @@ class SleepTab extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-
         Row(
           children: [
             Expanded(
@@ -192,12 +183,6 @@ class SleepTab extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 20),
-
-        _MeasureButton(state: state),
-        const SizedBox(height: 12),
-
-        _LoadHealthConnectButton(state: state),
       ],
     );
   }
@@ -499,13 +484,57 @@ class _HealthSyncInfo extends StatelessWidget {
     required this.state,
   });
 
+  Future<void> _refresh(BuildContext context) async {
+    await state.loadHealthConnectSleep();
+
+    if (!context.mounted) return;
+
+    if (state.healthError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Health Connect 오류: ${state.healthError}'),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Health Connect 수면 데이터가 최신으로 반영되었습니다.'),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final syncedAt = state.lastHealthSyncAt;
+    final hasError = state.healthError != null;
 
-    final text = syncedAt == null
-        ? 'Health Connect 미동기화'
-        : 'Health Connect 동기화 완료 · ${DateFormat('HH:mm').format(syncedAt)}';
+    String text;
+    Color iconColor;
+    IconData icon;
+
+    if (state.healthLoading) {
+      text = 'Health Connect 동기화 중...';
+      iconColor = AppColors.accent;
+      icon = Icons.health_and_safety;
+    } else if (hasError && syncedAt == null) {
+      text = 'Health Connect 연동 실패\n기본값(0)으로 표시 중';
+      iconColor = AppColors.orange;
+      icon = Icons.warning_amber_rounded;
+    } else if (hasError) {
+      text =
+          'Health Connect 동기화 실패\n마지막 성공 ${DateFormat('HH:mm').format(syncedAt!)}';
+      iconColor = AppColors.orange;
+      icon = Icons.warning_amber_rounded;
+    } else if (syncedAt != null) {
+      text = 'Health Connect 동기화 완료\n${DateFormat('HH:mm').format(syncedAt)}';
+      iconColor = AppColors.accent;
+      icon = Icons.health_and_safety;
+    } else {
+      text = 'Health Connect 동기화 대기 중';
+      iconColor = AppColors.muted;
+      icon = Icons.health_and_safety;
+    }
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -518,9 +547,9 @@ class _HealthSyncInfo extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.health_and_safety,
-            color: AppColors.accent,
+          Icon(
+            icon,
+            color: iconColor,
             size: 20,
           ),
           const SizedBox(width: 10),
@@ -534,165 +563,20 @@ class _HealthSyncInfo extends StatelessWidget {
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MeasureButton extends StatelessWidget {
-  final AppState state;
-
-  const _MeasureButton({
-    required this.state,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (state.measuring) {
-      final e = state.measuredElapsed;
-      final t =
-          '${e.inHours}시간 ${(e.inMinutes % 60).toString().padLeft(2, '0')}분';
-
-      return AppCard(
-        child: Column(
-          children: [
-            const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.fiber_manual_record,
-                  color: AppColors.pink,
-                  size: 12,
-                ),
-                SizedBox(width: 8),
-                Text(
-                  '수면 측정 중...',
-                  style: TextStyle(
-                    color: AppColors.foreground,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              t,
-              style: const TextStyle(
-                color: AppColors.primary,
-                fontSize: 30,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton.icon(
-                onPressed: state.stopMeasuring,
-                icon: const Icon(Icons.stop),
-                label: const Text('측정 종료 및 저장'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.pink,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return SizedBox(
-      width: double.infinity,
-      height: 54,
-      child: ElevatedButton.icon(
-        onPressed: state.startMeasuring,
-        icon: const Icon(Icons.play_arrow),
-        label: const Text(
-          '수면 측정 시작',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primary,
-          foregroundColor: const Color(0xFF10142A),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LoadHealthConnectButton extends StatelessWidget {
-  final AppState state;
-
-  const _LoadHealthConnectButton({
-    required this.state,
-  });
-
-  Future<void> _load(BuildContext context) async {
-    await state.loadHealthConnectSleep();
-
-    if (!context.mounted) return;
-
-    if (state.healthError != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Health Connect 오류: ${state.healthError}'),
-        ),
-      );
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Health Connect 수면 데이터가 화면에 반영되었습니다.'),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: 54,
-      child: OutlinedButton.icon(
-        onPressed: state.healthLoading ? null : () => _load(context),
-        icon: state.healthLoading
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                ),
-              )
-            : const Icon(Icons.health_and_safety),
-        label: Text(
           state.healthLoading
-              ? 'Health Connect 불러오는 중...'
-              : 'Health Connect 수면 데이터 불러오기',
-          style: const TextStyle(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: AppColors.primary,
-          side: const BorderSide(
-            color: AppColors.primary,
-          ),
-          shape: RoundedRectangleBorder(
-            // border
-            borderRadius: BorderRadius.circular(14),
-          ),
-        ),
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : IconButton(
+                  onPressed: () => _refresh(context),
+                  icon: const Icon(Icons.refresh,
+                      size: 20, color: AppColors.muted),
+                  tooltip: '다시 동기화',
+                  visualDensity: VisualDensity.compact,
+                ),
+        ],
       ),
     );
   }
