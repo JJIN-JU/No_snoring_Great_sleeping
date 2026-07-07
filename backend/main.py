@@ -7,6 +7,13 @@ from pydantic import BaseModel
 
 from app.database import users_collection
 
+from app.database import (
+    users_collection,
+    sleep_sessions,
+    snore_events,
+    daily_stats,
+)
+
 app = FastAPI(
     title="ZZCare API",
     description="ZZCare 사용자 데이터 API",
@@ -98,6 +105,48 @@ def save_kakao_user(payload: KakaoLoginRequest):
         "user": user_to_response(user),
     }
 
+@app.delete("/auth/kakao/{kakao_id}")
+def delete_kakao_user(kakao_id: str):
+    user = users_collection.find_one(
+        {"provider": "kakao", "kakao_id": kakao_id}
+    )
+
+    if user is None:
+        return {
+            "success": True,
+            "message": "이미 삭제된 사용자입니다.",
+            "deleted_user": 0,
+            "deleted_sleep_sessions": 0,
+            "deleted_snore_events": 0,
+            "deleted_daily_stats": 0,
+        }
+
+    user_id = str(user["_id"])
+
+    deleted_sleep_sessions = sleep_sessions.delete_many(
+        {"user_id": user_id}
+    ).deleted_count
+
+    deleted_snore_events = snore_events.delete_many(
+        {"user_id": user_id}
+    ).deleted_count
+
+    deleted_daily_stats = daily_stats.delete_many(
+        {"user_id": user_id}
+    ).deleted_count
+
+    deleted_user = users_collection.delete_one(
+        {"provider": "kakao", "kakao_id": kakao_id}
+    ).deleted_count
+
+    return {
+        "success": True,
+        "message": "회원 정보가 삭제되었습니다.",
+        "deleted_user": deleted_user,
+        "deleted_sleep_sessions": deleted_sleep_sessions,
+        "deleted_snore_events": deleted_snore_events,
+        "deleted_daily_stats": deleted_daily_stats,
+    }
 
 @app.get("/users")
 def get_users():
