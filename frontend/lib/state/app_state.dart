@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:flutter/material.dart';
 
@@ -21,19 +20,16 @@ class AppState extends ChangeNotifier {
   String bedtimeTarget = '23:30';
   String wakeTarget = '07:00';
 
-  // 측정 상태
-  bool measuring = false;
-  Duration measuredElapsed = Duration.zero;
-  Timer? _timer;
-
   // Health Connect 상태
   bool healthLoading = false;
   String? healthError;
   DateTime? lastHealthSyncAt;
 
-  final List<SleepRecord> _records = _seedRecords();
+  // 실제 Health Connect 데이터만 반영한다 (목업/샘플 데이터 없음).
+  final List<SleepRecord> _records = [];
 
   List<SleepRecord> get records => _records;
+  bool get hasRecords => _records.isNotEmpty;
   SleepRecord get current => _records[selectedIndex];
 
   bool get canGoPrev => selectedIndex < _records.length - 1;
@@ -43,6 +39,9 @@ class AppState extends ChangeNotifier {
   void loginWithKakao() {
     loggedIn = true;
     notifyListeners();
+
+    // 로그인 직후 Health Connect 수면 데이터를 자동으로 동기화한다.
+    loadHealthConnectSleep();
   }
 
   void logout() {
@@ -73,8 +72,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // --- Health Connect 수면 데이터 불러오기 ---
-  Future<void> loadHealthConnectSleep() async {
+  // --- Health Connect 수면 데이터 불러오기 (최근 며칠치) ---
+  Future<void> loadHealthConnectSleep({int nights = 7}) async {
     if (healthLoading) return;
 
     healthLoading = true;
@@ -83,150 +82,126 @@ class AppState extends ChangeNotifier {
 
     try {
       final service = HealthConnectService();
-      final result = await service.fetchLastNightSleep();
-
-      final totalSleepHours = double.parse(
-        (result.totalSleepMinutes / 60).toStringAsFixed(1),
-      );
+      final history = await service.fetchSleepHistory(nights: nights);
 
       final targetHours = _parseHours(bedtimeTarget, wakeTarget);
 
-      final bedtimeActual = result.bedtime == null
-          ? current.bedtimeActual
-          : _formatTime(result.bedtime!);
+      // 같은 날짜의 기존 레코드가 있다면(예: 수동 측정으로 채운 코골이 값)
+      // 코골이 관련 필드는 최대한 유지한다.
+      final oldByDate = <String, SleepRecord>{
+        for (final r in _records) _dateKey(r.date): r,
+      };
 
-      final wakeActual = result.wakeTime == null
-          ? current.wakeActual
-          : _formatTime(result.wakeTime!);
+      final newRecords = history.map((result) {
+        final old = oldByDate[_dateKey(result.date)];
 
-      final stages = result.stages.isEmpty
-          ? current.stages
-          : result.stages.map((stage) {
-              return SleepStage(
-                stage.name,
-                stage.minutes,
-                _stageColor(stage.name),
-              );
-            }).toList();
+        final totalSleepHours = double.parse(
+          (result.totalSleepMinutes / 60).toStringAsFixed(1),
+        );
 
-      final score = _calculateSleepScore(
-        totalSleepHours: totalSleepHours,
-        targetSleepHours: targetHours,
-        stages: stages,
-      );
+        final bedtimeActual = result.bedtime == null
+            ? (old?.bedtimeActual ?? bedtimeTarget)
+            : _formatTime(result.bedtime!);
 
-      final old = current;
+        final wakeActual = result.wakeTime == null
+            ? (old?.wakeActual ?? wakeTarget)
+            : _formatTime(result.wakeTime!);
 
-      final updatedRecord = SleepRecord(
-        date: DateTime.now(),
-        score: score,
-        bedtimeTarget: bedtimeTarget,
-        wakeTarget: wakeTarget,
-        bedtimeActual: bedtimeActual,
-        wakeActual: wakeActual,
-        totalSleepHours: totalSleepHours,
-        targetSleepHours: targetHours,
+        final stages = result.stages.isNotEmpty
+            ? result.stages.map((stage) {
+                return SleepStage(
+                  stage.name,
+                  stage.minutes,
+                  _stageColor(stage.name),
+                );
+              }).toList()
+            : (old?.stages ?? <SleepStage>[]);
 
-        // 코골이 모델은 아직 연결 전이므로 기존 값 유지
-        avgSnoreDb: old.avgSnoreDb,
-        maxSnoreDb: old.maxSnoreDb,
-        snoreHours: old.snoreHours,
-        snoreFreqHz: old.snoreFreqHz,
-        snoreCount: old.snoreCount,
-        noiseDb: old.noiseDb,
-        stages: stages,
-        snoreTimeline: old.snoreTimeline,
-      );
+        final score = _calculateSleepScore(
+          totalSleepHours: totalSleepHours,
+          targetSleepHours: targetHours,
+          stages: stages,
+        );
 
-      if (_records.isNotEmpty && _isSameDate(_records[0].date, DateTime.now())) {
-        _records[0] = updatedRecord;
-      } else {
-        _records.insert(0, updatedRecord);
-      }
+        return SleepRecord(
+          date: result.date,
+          score: score,
+          bedtimeTarget: bedtimeTarget,
+          wakeTarget: wakeTarget,
+          bedtimeActual: bedtimeActual,
+          wakeActual: wakeActual,
+          totalSleepHours: totalSleepHours,
+          targetSleepHours: targetHours,
+
+          // 코골이는 아직 Health Connect와 연동되지 않았으므로
+          // 기존 값이 있으면 유지하고, 없으면 0으로 둔다 (이번 작업 범위 밖).
+          avgSnoreDb: old?.avgSnoreDb ?? 0,
+          maxSnoreDb: old?.maxSnoreDb ?? 0,
+          snoreHours: old?.snoreHours ?? 0,
+          snoreFreqHz: old?.snoreFreqHz ?? 0,
+          snoreCount: old?.snoreCount ?? 0,
+          noiseDb: old?.noiseDb ?? 0,
+          stages: stages,
+          snoreTimeline: old?.snoreTimeline ?? const [],
+        );
+      }).toList();
+
+      // history는 이미 최신 -> 과거 순으로 정렬되어 있으므로 그대로 교체한다.
+      _records
+        ..clear()
+        ..addAll(newRecords);
 
       selectedIndex = 0;
       lastHealthSyncAt = DateTime.now();
     } catch (e) {
       healthError = e.toString();
+
+      // Health Connect를 아예 처음 못 불러온 경우, 빈 화면 대신
+      // 0/기본값으로 채운 레코드를 넣어서 페이지 자체는 정상적으로 뜨게 한다.
+      if (_records.isEmpty) {
+        _records.addAll(_fallbackRecords(nights));
+        selectedIndex = 0;
+      }
     } finally {
       healthLoading = false;
       notifyListeners();
     }
   }
 
-  // --- 수면 측정 ---
-  void startMeasuring() {
-    if (measuring) return;
+  List<SleepRecord> _fallbackRecords(int nights) {
+    final now = DateTime.now();
+    final todayMidnight = DateTime(now.year, now.month, now.day);
+    final targetHours = _parseHours(bedtimeTarget, wakeTarget);
 
-    measuring = true;
-    measuredElapsed = Duration.zero;
+    return List.generate(nights, (i) {
+      final date = todayMidnight.subtract(Duration(days: i));
 
-    // 데모용으로 1초 = 12분처럼 빠르게 흐르게 한다.
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      measuredElapsed += const Duration(minutes: 12);
-      notifyListeners();
-    });
-
-    notifyListeners();
-  }
-
-  void stopMeasuring() {
-    if (!measuring) return;
-
-    _timer?.cancel();
-    measuring = false;
-    _addRecordFromMeasurement();
-    selectedIndex = 0;
-    measuredElapsed = Duration.zero;
-
-    notifyListeners();
-  }
-
-  void _addRecordFromMeasurement() {
-    final rnd = Random();
-    final hours = max(4.0, measuredElapsed.inMinutes / 60.0);
-    final deep = hours * 60 * 0.22;
-    final rem = hours * 60 * 0.23;
-    final light = hours * 60 * 0.48;
-    final awake = hours * 60 * 0.07;
-    final score = (65 + rnd.nextInt(30)).clamp(0, 100);
-    final target = _parseHours(bedtimeTarget, wakeTarget);
-
-    _records.insert(
-      0,
-      SleepRecord(
-        date: DateTime.now(),
-        score: score,
+      return SleepRecord(
+        date: date,
+        score: 0,
         bedtimeTarget: bedtimeTarget,
         wakeTarget: wakeTarget,
         bedtimeActual: bedtimeTarget,
         wakeActual: wakeTarget,
-        totalSleepHours: double.parse(hours.toStringAsFixed(1)),
-        targetSleepHours: target,
-        avgSnoreDb: 38 + rnd.nextInt(12).toDouble(),
-        maxSnoreDb: 55 + rnd.nextInt(15).toDouble(),
-        snoreHours: double.parse((rnd.nextDouble() * 2).toStringAsFixed(1)),
-        snoreFreqHz: 60 + rnd.nextInt(60),
-        snoreCount: 20 + rnd.nextInt(80),
-        noiseDb: 30 + rnd.nextInt(10).toDouble(),
-        stages: [
-          SleepStage('깊은 수면', deep, AppColors.primary),
-          SleepStage('렘 수면', rem, AppColors.accent),
-          SleepStage('얕은 수면', light, AppColors.gold),
-          SleepStage('깸', awake, AppColors.orange),
-        ],
-        snoreTimeline: _genTimeline(rnd),
-      ),
-    );
+        totalSleepHours: 0,
+        targetSleepHours: targetHours,
+        avgSnoreDb: 0,
+        maxSnoreDb: 0,
+        snoreHours: 0,
+        snoreFreqHz: 0,
+        snoreCount: 0,
+        noiseDb: 0,
+        stages: const [],
+        snoreTimeline: const [],
+      );
+    });
   }
 
   static String _formatTime(DateTime time) {
     return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
 
-  static bool _isSameDate(DateTime a, DateTime b) {
-    return a.year == b.year && a.month == b.month && a.day == b.day;
-  }
+  static String _dateKey(DateTime d) => '${d.year}-${d.month}-${d.day}';
 
   static Color _stageColor(String name) {
     if (name.contains('깊')) return AppColors.primary;
@@ -291,110 +266,10 @@ class AppState extends ChangeNotifier {
     final p = hhmm.split(':');
     return int.parse(p[0]) * 60 + int.parse(p[1]);
   }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-}
-
-List<SnorePoint> _genTimeline(Random rnd) {
-  const times = [
-    '23:30',
-    '00:00',
-    '00:30',
-    '01:00',
-    '01:30',
-    '02:00',
-    '02:30',
-    '03:00',
-    '03:30',
-    '04:00',
-    '04:30',
-    '05:00',
-    '05:30',
-    '06:00',
-    '06:30',
-  ];
-
-  return times
-      .map(
-        (t) => SnorePoint(
-          t,
-          25 + rnd.nextInt(45).toDouble(),
-        ),
-      )
-      .toList();
-}
-
-/// 초기 샘플 데이터 (최근 7일)
-List<SleepRecord> _seedRecords() {
-  final now = DateTime.now();
-
-  final stages1 = [
-    const SleepStage('깊은 수면', 95, AppColors.primary),
-    const SleepStage('렘 수면', 105, AppColors.accent),
-    const SleepStage('얕은 수면', 210, AppColors.gold),
-    const SleepStage('깸', 25, AppColors.orange),
-  ];
-
-  const timeline = [
-    SnorePoint('23:30', 30),
-    SnorePoint('00:00', 42),
-    SnorePoint('00:30', 55),
-    SnorePoint('01:00', 48),
-    SnorePoint('01:30', 62),
-    SnorePoint('02:00', 58),
-    SnorePoint('02:30', 70),
-    SnorePoint('03:00', 45),
-    SnorePoint('03:30', 38),
-    SnorePoint('04:00', 52),
-    SnorePoint('04:30', 60),
-    SnorePoint('05:00', 40),
-    SnorePoint('05:30', 33),
-    SnorePoint('06:00', 28),
-    SnorePoint('06:30', 25),
-  ];
-
-  final scores = [88, 92, 74, 81, 67, 95, 79];
-  final sleep = [7.1, 7.8, 6.2, 6.9, 5.5, 8.0, 6.7];
-  final beds = ['23:40', '23:10', '00:20', '23:55', '01:10', '22:50', '00:05'];
-  final wakes = ['06:50', '07:00', '06:40', '06:55', '06:45', '07:00', '06:50'];
-
-  return List.generate(7, (i) {
-    final total = sleep[i];
-
-    return SleepRecord(
-      date: now.subtract(Duration(days: i)),
-      score: scores[i],
-      bedtimeTarget: '23:30',
-      wakeTarget: '07:00',
-      bedtimeActual: beds[i],
-      wakeActual: wakes[i],
-      totalSleepHours: total,
-      targetSleepHours: 7.5,
-      avgSnoreDb: 36 + (i * 2).toDouble(),
-      maxSnoreDb: 58 + i.toDouble(),
-      snoreHours: 0.8 + (i % 3) * 0.6,
-      snoreFreqHz: 70 + i * 6,
-      snoreCount: 30 + i * 9,
-      noiseDb: 32 + (i % 4).toDouble(),
-      stages: stages1
-          .map(
-            (s) => SleepStage(
-              s.name,
-              s.minutes * (total / 7.4),
-              s.color,
-            ),
-          )
-          .toList(),
-      snoreTimeline: timeline,
-    );
-  });
 }
 
 /// 월별 샘플 데이터
+/// (통계 탭의 '월별' 보기는 이번 작업 범위 밖이라 기존 샘플을 유지한다)
 const monthlyRecords = [
   MonthlyRecord('7월', 76, 6.8, 34, 1.2),
   MonthlyRecord('8월', 82, 7.2, 32, 0.8),
