@@ -32,7 +32,9 @@ class SavedUser {
 }
 
 class AuthApiService {
-  static const String baseUrl = 'http://127.0.0.1:8000';
+  static String get baseUrl {
+    return 'https://attitude-contamination-partially-coal.trycloudflare.com';
+  }
 
   Future<SavedUser> saveKakaoUser(KakaoLoginResult result) async {
     try {
