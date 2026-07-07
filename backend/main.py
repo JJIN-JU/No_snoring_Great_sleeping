@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from database import users_collection
+from app.database import users_collection
 
 app = FastAPI(
     title="ZZCare API",
