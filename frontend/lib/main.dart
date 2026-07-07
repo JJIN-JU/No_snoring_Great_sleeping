@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
+
 import 'state/app_state.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
@@ -7,7 +9,13 @@ import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  KakaoSdk.init(
+    nativeAppKey: '81002d08e4b40dd29d8b382f31f7158d',
+  );
+
   await initializeDateFormatting('ko');
+
   runApp(const SleepCareApp());
 }
 

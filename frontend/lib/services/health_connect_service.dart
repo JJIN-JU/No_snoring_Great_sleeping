@@ -77,6 +77,13 @@ class HealthConnectService {
       throw Exception('Health Connect 수면 권한이 허용되지 않았습니다.');
     }
 
+    final now = DateTime.now();
+
+    // 기존: 어제 18시 ~ 오늘 12시
+    // 변경: 최근 30일 전체 조회
+    final start = now.subtract(const Duration(days: 30));
+    final end = now.add(const Duration(minutes: 1));
+
     var points = await _health.getHealthDataFromTypes(
       types: _sleepTypes,
       startTime: overallStart,
@@ -117,19 +124,23 @@ class HealthConnectService {
     double remMinutes = 0;
     double awakeMinutes = 0;
 
-    for (final point in points) {
-      final minutes =
-          point.dateTo.difference(point.dateFrom).inMinutes.toDouble();
+    for (final point in relatedPoints) {
+      final minutes = _overlapMinutes(
+        point.dateFrom,
+        point.dateTo,
+        windowStart,
+        windowEnd,
+      );
 
       if (minutes <= 0) continue;
 
       bedtime ??= point.dateFrom;
-      if (point.dateFrom.isBefore(bedtime)) {
+      if (point.dateFrom.isBefore(bedtime!)) {
         bedtime = point.dateFrom;
       }
 
       wakeTime ??= point.dateTo;
-      if (point.dateTo.isAfter(wakeTime)) {
+      if (point.dateTo.isAfter(wakeTime!)) {
         wakeTime = point.dateTo;
       }
 
@@ -137,24 +148,36 @@ class HealthConnectService {
         case HealthDataType.SLEEP_SESSION:
           sessionMinutes += minutes;
           break;
+
         case HealthDataType.SLEEP_ASLEEP:
           asleepMinutes += minutes;
           break;
+
         case HealthDataType.SLEEP_LIGHT:
           lightMinutes += minutes;
           break;
+
         case HealthDataType.SLEEP_DEEP:
           deepMinutes += minutes;
           break;
+
         case HealthDataType.SLEEP_REM:
           remMinutes += minutes;
           break;
+
         case HealthDataType.SLEEP_AWAKE:
           awakeMinutes += minutes;
           break;
+
         default:
           break;
       }
+    }
+
+    // SLEEP_SESSION이 있으면 취침/기상은 세션 기준으로 고정
+    if (sessionPoints.isNotEmpty) {
+      bedtime = windowStart;
+      wakeTime = windowEnd;
     }
 
     final stages = <HealthSleepStage>[
@@ -175,6 +198,12 @@ class HealthConnectService {
             ? asleepMinutes
             : sessionMinutes;
 
+    if (totalSleepMinutes <= 0) {
+      throw Exception(
+        'Health Connect에서 수면 기록은 찾았지만 수면 시간이 0분으로 조회됐습니다.',
+      );
+    }
+
     return HealthSleepSummary(
       date: date,
       bedtime: bedtime,
@@ -182,5 +211,38 @@ class HealthConnectService {
       totalSleepMinutes: totalSleepMinutes,
       stages: stages,
     );
+  }
+
+  bool _overlaps(
+    DateTime aStart,
+    DateTime aEnd,
+    DateTime bStart,
+    DateTime bEnd,
+  ) {
+    return aStart.isBefore(bEnd) && aEnd.isAfter(bStart);
+  }
+
+  double _overlapMinutes(
+    DateTime aStart,
+    DateTime aEnd,
+    DateTime bStart,
+    DateTime bEnd,
+  ) {
+    final start = _maxDate(aStart, bStart);
+    final end = _minDate(aEnd, bEnd);
+
+    if (!end.isAfter(start)) {
+      return 0;
+    }
+
+    return end.difference(start).inMinutes.toDouble();
+  }
+
+  DateTime _maxDate(DateTime a, DateTime b) {
+    return a.isAfter(b) ? a : b;
+  }
+
+  DateTime _minDate(DateTime a, DateTime b) {
+    return a.isBefore(b) ? a : b;
   }
 }

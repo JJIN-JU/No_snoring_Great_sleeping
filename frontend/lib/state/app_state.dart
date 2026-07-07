@@ -4,53 +4,173 @@ import 'package:flutter/material.dart';
 
 import '../models/sleep_data.dart';
 import '../services/health_connect_service.dart';
+import '../services/kakao_auth_service.dart';
+import '../services/snore_measure_service.dart';
 import '../theme.dart';
 
-/// 앱 전역 상태.
-/// 로그인, 날짜 이동, 수면 측정, 목표 설정, Health Connect 수면 데이터 반영을 관리한다.
 class AppState extends ChangeNotifier {
+  // =========================
   // 로그인 상태
+  // =========================
+
   bool loggedIn = false;
   String userName = '홍길동';
 
-  // 현재 보고 있는 날짜 인덱스 (0 = 가장 최근)
+  bool loginLoading = false;
+  String? loginError;
+
+  String? kakaoId;
+  String? kakaoEmail;
+  String? profileImageUrl;
+  String? kakaoAccessToken;
+
+  // =========================
+  // 화면 / 날짜 상태
+  // =========================
+
   int selectedIndex = 0;
 
-  // 목표 수면 시간
   String bedtimeTarget = '23:30';
   String wakeTarget = '07:00';
 
+  // =========================
+  // 수면 + 코골이 측정 상태
+  // =========================
+
+  bool measuring = false;
+  Duration measuredElapsed = Duration.zero;
+
+  DateTime? _measureStartedAt;
+  Timer? _timer;
+
+  final SnoreMeasureService _snoreMeasureService = SnoreMeasureService();
+
+  String? snoreError;
+
+  bool get snoreRecording => _snoreMeasureService.isRunning;
+
+  // =========================
   // Health Connect 상태
+  // =========================
+
   bool healthLoading = false;
   String? healthError;
   DateTime? lastHealthSyncAt;
 
-  // 실제 Health Connect 데이터만 반영한다 (목업/샘플 데이터 없음).
+  // 샘플 데이터 없음
+  // Health Connect 수면 데이터 또는 폰 마이크 측정 데이터가 들어올 때만 records에 추가됨
   final List<SleepRecord> _records = [];
 
   List<SleepRecord> get records => _records;
+
+  SleepRecord get current {
+    if (_records.isEmpty) {
+      return _emptyRecord();
+    }
+
+    if (selectedIndex < 0) {
+      selectedIndex = 0;
+    }
+
+    if (selectedIndex >= _records.length) {
+      selectedIndex = _records.length - 1;
+    }
+
+    return _records[selectedIndex];
+  }
+
   bool get hasRecords => _records.isNotEmpty;
-  SleepRecord get current => _records[selectedIndex];
 
   bool get canGoPrev => selectedIndex < _records.length - 1;
   bool get canGoNext => selectedIndex > 0;
 
-  // --- 로그인 ---
-  void loginWithKakao() {
-    loggedIn = true;
+  // =========================
+  // 카카오 로그인
+  // =========================
+
+  Future<void> loginWithKakao() async {
+    if (loginLoading) return;
+
+    loginLoading = true;
+    loginError = null;
+    notifyListeners();
+
+    try {
+      final result = await KakaoAuthService().login();
+
+      loggedIn = true;
+      kakaoId = result.kakaoId;
+      kakaoEmail = result.email;
+      profileImageUrl = result.profileImageUrl;
+      kakaoAccessToken = result.accessToken;
+      userName = result.nickname?.isNotEmpty == true
+          ? result.nickname!
+          : '카카오 사용자';
+    } catch (e) {
+      loginError = e.toString();
+      loggedIn = false;
+    } finally {
+      loginLoading = false;
+      notifyListeners();
+    }
+  }
+  Future<void> logout() async {
+    try {
+      await KakaoAuthService().logout();
+    } catch (_) {
+      // 카카오 로그아웃 실패해도 앱 내부에서는 로그아웃 처리
+    }
+
+    loggedIn = false;
+    //selectedIndex = 0;
+
+    kakaoId = null;
+    kakaoEmail = null;
+    profileImageUrl = null;
+    kakaoAccessToken = null;
+    loginError = null;
+
     notifyListeners();
 
     // 로그인 직후 Health Connect 수면 데이터를 자동으로 동기화한다.
     loadHealthConnectSleep();
   }
 
-  void logout() {
+  Future<void> withdraw() async {
+    try {
+      await KakaoAuthService().unlink();
+    } catch (_) {
+      // 카카오 연결 해제 실패해도 앱 내부 상태는 초기화
+    }
+
     loggedIn = false;
-    selectedIndex = 0;
+    kakaoId = null;
+    kakaoEmail = null;
+    profileImageUrl = null;
+    kakaoAccessToken = null;
+    loginError = null;
+    userName = '홍길동';
+
     notifyListeners();
   }
+  
+  void _clearLoginState() {
+    loggedIn = false;
+    loginLoading = false;
+    loginError = null;
 
-  // --- 날짜 이동 ---
+    userName = '홍길동';
+
+    kakaoId = null;
+    kakaoEmail = null;
+    profileImageUrl = null;
+    kakaoAccessToken = null;
+  }
+
+  // =========================
+  // 날짜 이동
+  // =========================
+
   void goPrev() {
     if (canGoPrev) {
       selectedIndex++;
@@ -65,15 +185,45 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // --- 목표 시간 설정 ---
+  // =========================
+  // 목표 시간 설정
+  // =========================
+
   void setTargets(String bedtime, String wake) {
     bedtimeTarget = bedtime;
     wakeTarget = wake;
+
+    if (_records.isNotEmpty) {
+      final old = current;
+
+      _records[selectedIndex] = SleepRecord(
+        date: old.date,
+        score: old.score,
+        bedtimeTarget: bedtimeTarget,
+        wakeTarget: wakeTarget,
+        bedtimeActual: old.bedtimeActual,
+        wakeActual: old.wakeActual,
+        totalSleepHours: old.totalSleepHours,
+        targetSleepHours: _parseHours(bedtimeTarget, wakeTarget),
+        avgSnoreDb: old.avgSnoreDb,
+        maxSnoreDb: old.maxSnoreDb,
+        snoreHours: old.snoreHours,
+        snoreFreqHz: old.snoreFreqHz,
+        snoreCount: old.snoreCount,
+        noiseDb: old.noiseDb,
+        stages: old.stages,
+        snoreTimeline: old.snoreTimeline,
+      );
+    }
+
     notifyListeners();
   }
 
-  // --- Health Connect 수면 데이터 불러오기 (최근 며칠치) ---
-  Future<void> loadHealthConnectSleep({int nights = 7}) async {
+  // =========================
+  // Health Connect 수면 데이터 불러오기
+  // =========================
+
+  Future<void> loadHealthConnectSleep() async {
     if (healthLoading) return;
 
     healthLoading = true;
@@ -82,74 +232,77 @@ class AppState extends ChangeNotifier {
 
     try {
       final service = HealthConnectService();
-      final history = await service.fetchSleepHistory(nights: nights);
+      final result = await service.fetchLastNightSleep();
+
+      final hasSleepTime = result.totalSleepMinutes > 0;
+      final hasBedWake = result.bedtime != null || result.wakeTime != null;
+      final hasStages = result.stages.isNotEmpty;
+
+      if (!hasSleepTime && !hasBedWake && !hasStages) {
+        throw Exception(
+          'Health Connect에 불러올 수면 데이터가 없습니다. 삼성 헬스에서 Health Connect 동기화를 먼저 확인해 주세요.',
+        );
+      }
+
+      final totalSleepHours = double.parse(
+        (result.totalSleepMinutes / 60).toStringAsFixed(1),
+      );
 
       final targetHours = _parseHours(bedtimeTarget, wakeTarget);
 
-      // 같은 날짜의 기존 레코드가 있다면(예: 수동 측정으로 채운 코골이 값)
-      // 코골이 관련 필드는 최대한 유지한다.
-      final oldByDate = <String, SleepRecord>{
-        for (final r in _records) _dateKey(r.date): r,
-      };
+      final old = _records.isEmpty ? _emptyRecord() : current;
 
-      final newRecords = history.map((result) {
-        final old = oldByDate[_dateKey(result.date)];
+      final bedtimeActual = result.bedtime == null
+          ? old.bedtimeActual
+          : _formatTime(result.bedtime!);
 
-        final totalSleepHours = double.parse(
-          (result.totalSleepMinutes / 60).toStringAsFixed(1),
-        );
+      final wakeActual = result.wakeTime == null
+          ? old.wakeActual
+          : _formatTime(result.wakeTime!);
 
-        final bedtimeActual = result.bedtime == null
-            ? (old?.bedtimeActual ?? bedtimeTarget)
-            : _formatTime(result.bedtime!);
+      final stages = result.stages.isEmpty
+          ? old.stages
+          : result.stages.map((stage) {
+              return SleepStage(
+                stage.name,
+                stage.minutes,
+                _stageColor(stage.name),
+              );
+            }).toList();
 
-        final wakeActual = result.wakeTime == null
-            ? (old?.wakeActual ?? wakeTarget)
-            : _formatTime(result.wakeTime!);
+      final score = _calculateSleepScore(
+        totalSleepHours: totalSleepHours,
+        targetSleepHours: targetHours,
+        stages: stages,
+      );
 
-        final stages = result.stages.isNotEmpty
-            ? result.stages.map((stage) {
-                return SleepStage(
-                  stage.name,
-                  stage.minutes,
-                  _stageColor(stage.name),
-                );
-              }).toList()
-            : (old?.stages ?? <SleepStage>[]);
+      final updatedRecord = SleepRecord(
+        date: DateTime.now(),
+        score: score,
+        bedtimeTarget: bedtimeTarget,
+        wakeTarget: wakeTarget,
+        bedtimeActual: bedtimeActual,
+        wakeActual: wakeActual,
+        totalSleepHours: totalSleepHours,
+        targetSleepHours: targetHours,
 
-        final score = _calculateSleepScore(
-          totalSleepHours: totalSleepHours,
-          targetSleepHours: targetHours,
-          stages: stages,
-        );
+        // 코골이/소음 값은 Health Connect가 아니라 폰 마이크 측정값 유지
+        avgSnoreDb: old.avgSnoreDb,
+        maxSnoreDb: old.maxSnoreDb,
+        snoreHours: old.snoreHours,
+        snoreFreqHz: old.snoreFreqHz,
+        snoreCount: old.snoreCount,
+        noiseDb: old.noiseDb,
+        snoreTimeline: old.snoreTimeline,
 
-        return SleepRecord(
-          date: result.date,
-          score: score,
-          bedtimeTarget: bedtimeTarget,
-          wakeTarget: wakeTarget,
-          bedtimeActual: bedtimeActual,
-          wakeActual: wakeActual,
-          totalSleepHours: totalSleepHours,
-          targetSleepHours: targetHours,
+        stages: stages,
+      );
 
-          // 코골이는 아직 Health Connect와 연동되지 않았으므로
-          // 기존 값이 있으면 유지하고, 없으면 0으로 둔다 (이번 작업 범위 밖).
-          avgSnoreDb: old?.avgSnoreDb ?? 0,
-          maxSnoreDb: old?.maxSnoreDb ?? 0,
-          snoreHours: old?.snoreHours ?? 0,
-          snoreFreqHz: old?.snoreFreqHz ?? 0,
-          snoreCount: old?.snoreCount ?? 0,
-          noiseDb: old?.noiseDb ?? 0,
-          stages: stages,
-          snoreTimeline: old?.snoreTimeline ?? const [],
-        );
-      }).toList();
-
-      // history는 이미 최신 -> 과거 순으로 정렬되어 있으므로 그대로 교체한다.
-      _records
-        ..clear()
-        ..addAll(newRecords);
+      if (_records.isNotEmpty && _isSameDate(_records[0].date, DateTime.now())) {
+        _records[0] = updatedRecord;
+      } else {
+        _records.insert(0, updatedRecord);
+      }
 
       selectedIndex = 0;
       lastHealthSyncAt = DateTime.now();
@@ -168,34 +321,143 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  List<SleepRecord> _fallbackRecords(int nights) {
-    final now = DateTime.now();
-    final todayMidnight = DateTime(now.year, now.month, now.day);
-    final targetHours = _parseHours(bedtimeTarget, wakeTarget);
+  // =========================
+  // 실제 마이크 기반 코골이/소음 측정
+  // =========================
 
-    return List.generate(nights, (i) {
-      final date = todayMidnight.subtract(Duration(days: i));
+  Future<void> startMeasuring() async {
+    if (measuring) return;
 
-      return SleepRecord(
-        date: date,
+    try {
+      snoreError = null;
+
+      await _snoreMeasureService.start();
+
+      measuring = true;
+      measuredElapsed = Duration.zero;
+      _measureStartedAt = DateTime.now();
+
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (_measureStartedAt == null) return;
+
+        measuredElapsed = DateTime.now().difference(_measureStartedAt!);
+        notifyListeners();
+      });
+
+      notifyListeners();
+    } catch (e) {
+      snoreError = e.toString();
+      measuring = false;
+      measuredElapsed = Duration.zero;
+      _measureStartedAt = null;
+      notifyListeners();
+    }
+  }
+
+  Future<void> stopMeasuring() async {
+    if (!measuring) return;
+
+    _timer?.cancel();
+
+    final snoreResult = await _snoreMeasureService.stop();
+
+    measuring = false;
+
+    if (_records.isNotEmpty) {
+      // Health Connect 수면 기록이 있으면 그 기록에 코골이 측정값만 덮어씀
+      updateTodaySnoreData(snoreResult);
+    } else {
+      // Health Connect 수면 기록이 아직 없으면 코골이 측정값만 들어간 기록 생성
+      _addSnoreOnlyRecord(snoreResult);
+    }
+
+    selectedIndex = 0;
+    measuredElapsed = Duration.zero;
+    _measureStartedAt = null;
+
+    notifyListeners();
+  }
+
+  void _addSnoreOnlyRecord(SnoreMeasureResult snoreResult) {
+    final start = _measureStartedAt ?? DateTime.now();
+    final end = DateTime.now();
+
+    final timeline = snoreResult.snoreTimeline.isEmpty
+        ? const <SnorePoint>[]
+        : snoreResult.snoreTimeline;
+
+    _records.insert(
+      0,
+      SleepRecord(
+        date: DateTime.now(),
+
+        // Health Connect 수면 데이터가 없으므로 수면 점수는 0
         score: 0,
         bedtimeTarget: bedtimeTarget,
         wakeTarget: wakeTarget,
-        bedtimeActual: bedtimeTarget,
-        wakeActual: wakeTarget,
+
+        // 실제 마이크 측정 시작/종료 시각
+        bedtimeActual: _formatTime(start),
+        wakeActual: _formatTime(end),
+
+        // 수면 시간은 Health Connect 값이 아니므로 0으로 둠
+        // 수면 데이터를 원하면 Health Connect 불러오기를 먼저 해야 함
         totalSleepHours: 0,
-        targetSleepHours: targetHours,
-        avgSnoreDb: 0,
-        maxSnoreDb: 0,
-        snoreHours: 0,
-        snoreFreqHz: 0,
-        snoreCount: 0,
-        noiseDb: 0,
+        targetSleepHours: _parseHours(bedtimeTarget, wakeTarget),
+
+        // 실제 폰 마이크 측정 결과
+        avgSnoreDb: snoreResult.avgSnoreDb,
+        maxSnoreDb: snoreResult.maxSnoreDb,
+        snoreHours: snoreResult.snoreHours,
+        snoreFreqHz: snoreResult.snoreFreqHz,
+        snoreCount: snoreResult.snoreCount,
+        noiseDb: snoreResult.noiseDb,
+        snoreTimeline: timeline,
+
+        // 수면 단계는 Health Connect에서 받아오기 전까지 비워둠
         stages: const [],
-        snoreTimeline: const [],
-      );
-    });
+      ),
+    );
   }
+
+  // Health Connect로 수면 기록을 먼저 가져온 뒤,
+  // 마이크 측정 결과만 현재 기록에 덮어씌움
+  void updateTodaySnoreData(SnoreMeasureResult snoreResult) {
+    if (_records.isEmpty) return;
+
+    final old = current;
+
+    _records[selectedIndex] = SleepRecord(
+      date: old.date,
+      score: old.score,
+      bedtimeTarget: old.bedtimeTarget,
+      wakeTarget: old.wakeTarget,
+      bedtimeActual: old.bedtimeActual,
+      wakeActual: old.wakeActual,
+      totalSleepHours: old.totalSleepHours,
+      targetSleepHours: old.targetSleepHours,
+
+      // 실제 폰 마이크 측정값
+      avgSnoreDb: snoreResult.avgSnoreDb,
+      maxSnoreDb: snoreResult.maxSnoreDb,
+      snoreHours: snoreResult.snoreHours,
+      snoreFreqHz: snoreResult.snoreFreqHz,
+      snoreCount: snoreResult.snoreCount,
+      noiseDb: snoreResult.noiseDb,
+      snoreTimeline: snoreResult.snoreTimeline.isEmpty
+          ? old.snoreTimeline
+          : snoreResult.snoreTimeline,
+
+      // 수면 단계는 Health Connect 값 유지
+      stages: old.stages,
+    );
+
+    notifyListeners();
+  }
+
+  // =========================
+  // 공통 유틸
+  // =========================
 
   static String _formatTime(DateTime time) {
     return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
@@ -216,6 +478,10 @@ class AppState extends ChangeNotifier {
     required double targetSleepHours,
     required List<SleepStage> stages,
   }) {
+    if (totalSleepHours <= 0) {
+      return 0;
+    }
+
     var score = 100.0;
 
     final diff = (targetSleepHours - totalSleepHours).abs();
@@ -264,17 +530,56 @@ class AppState extends ChangeNotifier {
 
   static int _toMinutes(String hhmm) {
     final p = hhmm.split(':');
-    return int.parse(p[0]) * 60 + int.parse(p[1]);
+
+    if (p.length != 2) {
+      return 0;
+    }
+
+    final hour = int.tryParse(p[0]) ?? 0;
+    final minute = int.tryParse(p[1]) ?? 0;
+
+    return hour * 60 + minute;
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _snoreMeasureService.cancel();
+    super.dispose();
   }
 }
 
-/// 월별 샘플 데이터
-/// (통계 탭의 '월별' 보기는 이번 작업 범위 밖이라 기존 샘플을 유지한다)
-const monthlyRecords = [
-  MonthlyRecord('7월', 76, 6.8, 34, 1.2),
-  MonthlyRecord('8월', 82, 7.2, 32, 0.8),
-  MonthlyRecord('9월', 79, 7.0, 36, 1.0),
-  MonthlyRecord('10월', 85, 7.4, 30, 0.6),
-  MonthlyRecord('11월', 73, 6.5, 38, 1.4),
-  MonthlyRecord('12월', 88, 7.6, 29, 0.4),
-];
+// =========================
+// 빈 기록
+// =========================
+
+SleepRecord _emptyRecord() {
+  final now = DateTime.now();
+
+  return SleepRecord(
+    date: now,
+    score: 0,
+    bedtimeTarget: '23:30',
+    wakeTarget: '07:00',
+    bedtimeActual: '--:--',
+    wakeActual: '--:--',
+    totalSleepHours: 0,
+    targetSleepHours: 7.5,
+    avgSnoreDb: 0,
+    maxSnoreDb: 0,
+    snoreHours: 0,
+    snoreFreqHz: 0,
+    snoreCount: 0,
+    noiseDb: 0,
+    stages: const [],
+    snoreTimeline: const [],
+  );
+}
+
+// =========================
+// 월별 통계
+// =========================
+
+// 임시 월별 샘플 제거.
+// 월별 통계를 실제 값으로 만들려면 stats_tab.dart에서 state.records를 월별로 묶어 평균 내도록 수정해야 함.
+const List<MonthlyRecord> monthlyRecords = [];
