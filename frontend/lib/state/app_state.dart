@@ -151,14 +151,33 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> withdraw() async {
-    try {
-      await KakaoAuthService().unlink();
-    } catch (_) {
-      // 카카오 연결 해제 실패해도 앱 내부 상태는 초기화
-    }
+    if (loginLoading) return;
 
-    _clearLoginState();
+    loginLoading = true;
+    loginError = null;
     notifyListeners();
+
+    final currentKakaoId = kakaoId;
+
+    try {
+      if (currentKakaoId == null || currentKakaoId.isEmpty) {
+        throw Exception('카카오 사용자 ID가 없어 DB 삭제를 진행할 수 없습니다.');
+      }
+
+      // 1. FastAPI 서버에 DB 사용자 삭제 요청
+      await AuthApiService().deleteKakaoUser(currentKakaoId);
+
+      // 2. 카카오 연결 해제
+      await KakaoAuthService().unlink();
+
+      // 3. 앱 내부 로그인 상태 초기화
+      _clearLoginState();
+    } catch (e) {
+      loginError = e.toString();
+    } finally {
+      loginLoading = false;
+      notifyListeners();
+    }
   }
 
   void _clearLoginState() {
