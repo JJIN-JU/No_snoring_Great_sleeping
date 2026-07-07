@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
+import '../widgets/kakao_profile_sheet.dart';
 import 'sleep_tab.dart';
 import 'snoring_tab.dart';
 import 'stats_tab.dart';
 
 class HomeScreen extends StatefulWidget {
   final AppState state;
-  const HomeScreen({super.key, required this.state});
+
+  const HomeScreen({
+    super.key,
+    required this.state,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -16,9 +21,33 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
 
+  void _openProfileSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.card,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(28),
+        ),
+      ),
+      builder: (_) {
+        return KakaoProfileSheet(
+          fallbackUserName: widget.state.userName,
+          email: widget.state.kakaoEmail,
+          profileImageUrl: widget.state.profileImageUrl,
+          onLogout: widget.state.logout,
+          onWithdrawComplete: widget.state.withdraw,
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final titles = ['수면', '코골이', '통계'];
+
     final tabs = [
       SleepTab(state: widget.state),
       SnoringTab(state: widget.state),
@@ -26,71 +55,106 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
 
     return Scaffold(
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: AppColors.background,
         elevation: 0,
-        title: Text(titles[_tab],
-            style: const TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: false,
+        title: Text(
+          titles[_tab],
+          style: const TextStyle(
+            color: AppColors.foreground,
+            fontWeight: FontWeight.w800,
+            fontSize: 26,
+          ),
+        ),
         actions: [
-          PopupMenuButton<String>(
-            icon: const CircleAvatar(
-              radius: 15,
-              backgroundColor: AppColors.cardAlt,
-              child: Icon(Icons.person, size: 18, color: AppColors.foreground),
-            ),
-            color: AppColors.card,
-            onSelected: (v) {
-              if (v == 'logout') widget.state.logout();
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem(
-                enabled: false,
-                child: Text('${widget.state.userName} 님',
-                    style: const TextStyle(color: AppColors.foreground)),
-              ),
-              const PopupMenuDivider(),
-              const PopupMenuItem(
-                value: 'logout',
-                child: Row(
-                  children: [
-                    Icon(Icons.logout, size: 18, color: AppColors.pink),
-                    SizedBox(width: 8),
-                    Text('로그아웃',
-                        style: TextStyle(color: AppColors.foreground)),
+          Padding(
+            padding: const EdgeInsets.only(right: 14),
+            child: GestureDetector(
+              onTap: _openProfileSheet,
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.cardAlt,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: AppColors.primary.withValues(alpha: 0.22),
+                    width: 1.2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.16),
+                      blurRadius: 12,
+                      offset: const Offset(0, 5),
+                    ),
                   ],
                 ),
+                child: const Icon(
+                  Icons.person_rounded,
+                  size: 24,
+                  color: AppColors.foreground,
+                ),
               ),
-            ],
+            ),
           ),
-          const SizedBox(width: 8),
         ],
       ),
-      body: IndexedStack(index: _tab, children: tabs),
+      body: IndexedStack(
+        index: _tab,
+        children: tabs,
+      ),
       bottomNavigationBar: NavigationBarTheme(
         data: NavigationBarThemeData(
           backgroundColor: AppColors.card,
-          indicatorColor: AppColors.primary.withOpacity(0.2),
+          indicatorColor: AppColors.primary.withValues(alpha: 0.2),
           labelTextStyle: WidgetStateProperty.all(
-            const TextStyle(fontSize: 12, color: AppColors.muted),
+            const TextStyle(
+              fontSize: 12,
+              color: AppColors.muted,
+            ),
           ),
         ),
         child: NavigationBar(
           selectedIndex: _tab,
-          onDestinationSelected: (i) => setState(() => _tab = i),
+          onDestinationSelected: (i) {
+            setState(() {
+              _tab = i;
+            });
+          },
           destinations: const [
             NavigationDestination(
-              icon: Icon(Icons.bedtime_outlined, color: AppColors.muted),
-              selectedIcon: Icon(Icons.bedtime, color: AppColors.primary),
+              icon: Icon(
+                Icons.bedtime_outlined,
+                color: AppColors.muted,
+              ),
+              selectedIcon: Icon(
+                Icons.bedtime,
+                color: AppColors.primary,
+              ),
               label: '수면',
             ),
             NavigationDestination(
-              icon: Icon(Icons.graphic_eq, color: AppColors.muted),
-              selectedIcon: Icon(Icons.graphic_eq, color: AppColors.primary),
+              icon: Icon(
+                Icons.graphic_eq,
+                color: AppColors.muted,
+              ),
+              selectedIcon: Icon(
+                Icons.graphic_eq,
+                color: AppColors.primary,
+              ),
               label: '코골이',
             ),
             NavigationDestination(
-              icon: Icon(Icons.bar_chart_outlined, color: AppColors.muted),
-              selectedIcon: Icon(Icons.bar_chart, color: AppColors.primary),
+              icon: Icon(
+                Icons.bar_chart_outlined,
+                color: AppColors.muted,
+              ),
+              selectedIcon: Icon(
+                Icons.bar_chart,
+                color: AppColors.primary,
+              ),
               label: '통계',
             ),
           ],
