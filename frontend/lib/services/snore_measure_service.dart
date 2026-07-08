@@ -56,7 +56,7 @@ class SnoreMeasureService {
   final AudioRecorder _recorder = AudioRecorder();
 
   StreamSubscription<Amplitude>? _amplitudeSubscription;
-  Timer? _segmentTimer;
+  Timer? _maxClipTimer;
 
   final List<double> _meanDbValues = [];
   final List<SnorePoint> _timeline = [];
@@ -66,6 +66,7 @@ class SnoreMeasureService {
   DateTime? _lastReadingAt;
   DateTime? _lastTimelineAt;
   DateTime? _segmentStartedAt;
+  DateTime? _lastSnoreAt;
 
   String? _currentPath;
 
@@ -79,17 +80,19 @@ class SnoreMeasureService {
   bool _running = false;
   bool _rotating = false;
   bool _inSnoreSection = false;
+  bool _segmentHasSnore = false;
 
   /// record 패키지의 amplitude는 실제 생활소음 dB가 아니라 dBFS에 가까움.
   /// 앱 표시용으로 0~100 범위로 보정해서 사용.
   static const double snoreThresholdDb = 45.0;
   static const double snoreEndThresholdDb = 42.0;
 
-  /// 10초 단위로 녹음.
-  static const Duration segmentDuration = Duration(seconds: 10);
+  /// 코골이가 30초 동안 다시 감지되지 않으면 하나의 코골이 구간을 종료.
+  static const Duration snoreGapDuration = Duration(seconds: 30);
 
-  /// 표시/저장용: 10분 구간에서 대표 클립만 남김.
-  static const Duration clipBucketDuration = Duration(minutes: 10);
+  /// 한 녹음 클립은 최대 10분까지만 유지.
+  /// 10분 안에서도 30초 이상 코골이가 끊기면 더 빨리 분리됨.
+  static const Duration maxClipDuration = Duration(minutes: 10);
 
   /// 화면 표시 + DB 업로드용 최대 클립 수.
   static const int maxResultClips = 5;
@@ -124,8 +127,8 @@ class SnoreMeasureService {
         },
       );
 
-      _segmentTimer = Timer.periodic(segmentDuration, (_) {
-        _rotateSegment();
+      _maxClipTimer = Timer.periodic(maxClipDuration, (_) {
+        _rotateSegmentByMaxDuration();
       });
     } catch (e) {
       _running = false;
@@ -147,13 +150,12 @@ class SnoreMeasureService {
 
     _running = false;
 
-    _segmentTimer?.cancel();
-    _segmentTimer = null;
+    _maxClipTimer?.cancel();
+    _maxClipTimer = null;
 
     await _amplitudeSubscription?.cancel();
     _amplitudeSubscription = null;
 
-    // 10초 단위 파일 회전 중에 종료 버튼을 누른 경우 대기
     while (_rotating) {
       await Future.delayed(const Duration(milliseconds: 80));
     }
@@ -162,8 +164,6 @@ class SnoreMeasureService {
       await _finishCurrentSegment();
     }
 
-    // 핵심 추가:
-    // 10분 구간별 대표 클립만 남기고, 그중 max dB 기준 TOP 5만 유지
     await _keepOnlyTopClips();
 
     return _buildResult();
@@ -172,8 +172,8 @@ class SnoreMeasureService {
   Future<void> cancel() async {
     _running = false;
 
-    _segmentTimer?.cancel();
-    _segmentTimer = null;
+    _maxClipTimer?.cancel();
+    _maxClipTimer = null;
 
     await _amplitudeSubscription?.cancel();
     _amplitudeSubscription = null;
@@ -210,6 +210,8 @@ class SnoreMeasureService {
     _clipIndex++;
     _currentPath = path;
     _segmentStartedAt = now;
+    _lastSnoreAt = null;
+    _segmentHasSnore = false;
     _segmentDbValues.clear();
     _segmentMaxDb = 0;
 
@@ -234,7 +236,6 @@ class SnoreMeasureService {
       );
     }
 
-    // wav가 안 되는 기기에서는 m4a로 fallback
     final aacSupported = await _safeIsEncoderSupported(AudioEncoder.aacLc);
 
     if (aacSupported) {
@@ -260,7 +261,7 @@ class SnoreMeasureService {
     }
   }
 
-  Future<void> _rotateSegment() async {
+  Future<void> _rotateSegmentByMaxDuration() async {
     if (!_running || _rotating) return;
 
     _rotating = true;
@@ -272,7 +273,26 @@ class SnoreMeasureService {
         await _startNewSegment();
       }
     } catch (_) {
-      // 회전 실패 시 녹음 상태 꼬임 방지
+      _running = false;
+      await _safeCancelRecorder();
+      _clearSegment();
+    } finally {
+      _rotating = false;
+    }
+  }
+
+  Future<void> _rotateSegmentBySnoreGap() async {
+    if (!_running || _rotating) return;
+
+    _rotating = true;
+
+    try {
+      await _finishCurrentSegment();
+
+      if (_running) {
+        await _startNewSegment();
+      }
+    } catch (_) {
       _running = false;
       await _safeCancelRecorder();
       _clearSegment();
@@ -313,7 +333,10 @@ class SnoreMeasureService {
         ? 0.0
         : _segmentDbValues.reduce((a, b) => a + b) / _segmentDbValues.length;
 
-    final shouldKeep = _segmentMaxDb >= snoreThresholdDb;
+    // 핵심:
+    // 단순히 maxDb가 높다고 저장하지 않고,
+    // 이 파일 구간 안에 실제 코골이로 판별된 구간이 있어야 저장.
+    final shouldKeep = _segmentHasSnore && _segmentMaxDb >= snoreThresholdDb;
 
     if (shouldKeep) {
       _audioClips.add(
@@ -332,15 +355,15 @@ class SnoreMeasureService {
     _clearSegment();
   }
 
-  /// 10분 단위로 묶어서 각 구간의 대표 클립 1개만 남긴 뒤,
-  /// 전체 max dB 기준 TOP 5만 최종 유지.
   Future<void> _keepOnlyTopClips() async {
     if (_audioClips.isEmpty) return;
 
-    final selected = _selectTopClipsByBucket(_audioClips);
-    final selectedPaths = selected.map((clip) => clip.path).toSet();
+    final sorted = _audioClips.toList()
+      ..sort((a, b) => b.maxDb.compareTo(a.maxDb));
 
-    // 선택되지 않은 녹음 파일은 휴대폰 저장소에서 삭제
+    final topClips = sorted.take(maxResultClips).toList();
+    final selectedPaths = topClips.map((clip) => clip.path).toSet();
+
     for (final clip in _audioClips) {
       if (!selectedPaths.contains(clip.path)) {
         await _deleteFileIfExists(clip.path);
@@ -349,43 +372,7 @@ class SnoreMeasureService {
 
     _audioClips
       ..clear()
-      ..addAll(selected);
-  }
-
-  List<SnoreAudioClip> _selectTopClipsByBucket(
-    List<SnoreAudioClip> clips,
-  ) {
-    final bucketBest = <int, SnoreAudioClip>{};
-
-    for (final clip in clips) {
-      final bucketKey = _bucketKeyFromTime(clip.time);
-
-      final old = bucketBest[bucketKey];
-
-      if (old == null || clip.maxDb > old.maxDb) {
-        bucketBest[bucketKey] = clip;
-      }
-    }
-
-    final selected = bucketBest.values.toList()
-      ..sort((a, b) => b.maxDb.compareTo(a.maxDb));
-
-    return selected.take(maxResultClips).toList();
-  }
-
-  int _bucketKeyFromTime(String hhmm) {
-    final parts = hhmm.split(':');
-
-    if (parts.length != 2) {
-      return 0;
-    }
-
-    final hour = int.tryParse(parts[0]) ?? 0;
-    final minute = int.tryParse(parts[1]) ?? 0;
-
-    final totalMinutes = hour * 60 + minute;
-
-    return totalMinutes ~/ clipBucketDuration.inMinutes;
+      ..addAll(topClips);
   }
 
   void _onAmplitudeData(Amplitude amplitude) {
@@ -402,24 +389,42 @@ class SnoreMeasureService {
     _maxDb = math.max(_maxDb, maxDb);
     _segmentMaxDb = math.max(_segmentMaxDb, maxDb);
 
+    final isSnoreNow = meanDb >= snoreThresholdDb;
+
     if (_lastReadingAt != null) {
       final diffSeconds =
           now.difference(_lastReadingAt!).inMilliseconds / 1000.0;
 
       final safeSeconds = diffSeconds.clamp(0.0, 5.0).toDouble();
 
-      if (meanDb >= snoreThresholdDb) {
+      if (isSnoreNow) {
         _snoreSeconds += safeSeconds;
       }
     }
 
-    if (meanDb >= snoreThresholdDb && !_inSnoreSection) {
-      _snoreCount++;
-      _inSnoreSection = true;
+    if (isSnoreNow) {
+      _segmentHasSnore = true;
+      _lastSnoreAt = now;
+
+      if (!_inSnoreSection) {
+        _snoreCount++;
+        _inSnoreSection = true;
+      }
     }
 
     if (meanDb < snoreEndThresholdDb) {
       _inSnoreSection = false;
+    }
+
+    // 핵심:
+    // 코골이가 한 번 감지된 뒤, 30초 동안 다시 코골이가 없으면
+    // 현재 녹음 클립을 종료하고 다음 클립으로 분리.
+    if (_segmentHasSnore && _lastSnoreAt != null && !isSnoreNow) {
+      final gap = now.difference(_lastSnoreAt!);
+
+      if (gap >= snoreGapDuration && !_rotating && _running) {
+        _rotateSegmentBySnoreGap();
+      }
     }
 
     if (_lastTimelineAt == null ||
@@ -504,6 +509,8 @@ class SnoreMeasureService {
   void _clearSegment() {
     _currentPath = null;
     _segmentStartedAt = null;
+    _lastSnoreAt = null;
+    _segmentHasSnore = false;
     _segmentDbValues.clear();
     _segmentMaxDb = 0;
   }
@@ -517,6 +524,7 @@ class SnoreMeasureService {
     _lastReadingAt = null;
     _lastTimelineAt = null;
     _segmentStartedAt = null;
+    _lastSnoreAt = null;
     _currentPath = null;
 
     _maxDb = 0;
@@ -526,6 +534,7 @@ class SnoreMeasureService {
     _clipIndex = 0;
 
     _inSnoreSection = false;
+    _segmentHasSnore = false;
     _rotating = false;
   }
 
