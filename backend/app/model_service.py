@@ -86,6 +86,7 @@ def predict(filepath: str) -> dict:
     # Return
     return {
         "snoring": bool(is_snoring),
-        "snoring_probability": float(binary_probability),
+        "snoring_probability": round(float(binary_probability), 4),
+        "has_noise": len(detected_noise) > 0,
         "noise": detected_noise
     }
