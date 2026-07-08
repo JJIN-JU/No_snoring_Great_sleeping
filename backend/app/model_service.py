@@ -27,18 +27,18 @@ LABELS = [
     "WhiteNoise",
 ]
 # =========Threshold=========
-BINARY_THRESHOLD = 0.75
+BINARY_THRESHOLD = 0.50
 MULTI_THRESHOLDS = {
     "Snoring": 0.50,
-    "Baby": 0.50,
-    "Door": 0.50,
+    "Baby": 0.32,
+    "Door": 0.16,
     "Environmental": 0.50,
     "Etc": 0.50,
     "Toilet": 0.50,
-    "VoiceTV": 0.50,
+    "VoiceTV": 0.88,
     "Vehicles": 0.50,
     "Vibration": 0.50,
-    "WhiteNoise": 0.50,
+    "WhiteNoise": 0.53,
 }
 
 # =========모델=========
