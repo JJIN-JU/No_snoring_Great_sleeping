@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -6,6 +7,7 @@ import '../models/sleep_data.dart';
 import '../services/auth_api_service.dart';
 import '../services/health_connect_service.dart';
 import '../services/kakao_auth_service.dart';
+import '../services/snore_classification_service.dart';
 import '../services/snore_measure_service.dart';
 import '../theme.dart';
 
@@ -240,6 +242,9 @@ class AppState extends ChangeNotifier {
         noiseDb: old.noiseDb,
         stages: old.stages,
         snoreTimeline: old.snoreTimeline,
+
+        // 목표 시간 변경 시 기존 녹음 클립 유지
+        snoreAudioClips: old.snoreAudioClips,
       );
     }
 
@@ -319,6 +324,9 @@ class AppState extends ChangeNotifier {
           noiseDb: old?.noiseDb ?? 0,
           snoreTimeline: old?.snoreTimeline ?? const [],
 
+          // Health Connect 동기화 후에도 기존 녹음 클립 유지
+          snoreAudioClips: old?.snoreAudioClips ?? const [],
+
           stages: stages,
         );
       }).toList();
@@ -393,6 +401,57 @@ class AppState extends ChangeNotifier {
     _measureStartedAt = null;
 
     notifyListeners();
+
+    // 핵심 추가:
+    // 화면에는 TOP 5만 남은 상태이고, 그 TOP 5만 서버로 업로드
+    await _uploadSnoreClipsToServer(snoreResult);
+
+    notifyListeners();
+  }
+
+  Future<void> _uploadSnoreClipsToServer(
+    SnoreMeasureResult snoreResult,
+  ) async {
+    if (userId == null || userId!.isEmpty) {
+      return;
+    }
+
+    if (snoreResult.audioClips.isEmpty) {
+      return;
+    }
+
+    final aiService = AIService();
+
+    var uploadedCount = 0;
+    Object? lastError;
+
+    for (final clip in snoreResult.audioClips) {
+      try {
+        final file = File(clip.path);
+
+        if (!await file.exists()) {
+          continue;
+        }
+
+        await aiService.predict(
+          userId: userId!,
+          wavFile: file,
+        );
+
+        uploadedCount++;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+
+    if (lastError != null) {
+      snoreError = '일부 코골이 녹음 DB 저장 실패: $lastError';
+      return;
+    }
+
+    if (uploadedCount > 0) {
+      snoreError = null;
+    }
   }
 
   void _addSnoreOnlyRecord(SnoreMeasureResult snoreResult) {
@@ -430,6 +489,10 @@ class AppState extends ChangeNotifier {
         noiseDb: snoreResult.noiseDb,
         snoreTimeline: timeline,
 
+        // 감지된 코골이 녹음 클립 저장
+        // 여기에는 이미 10분 단위 대표 TOP 5만 들어옴
+        snoreAudioClips: snoreResult.audioClips,
+
         // 수면 단계는 Health Connect에서 받아오기 전까지 비워둠
         stages: const [],
       ),
@@ -463,6 +526,11 @@ class AppState extends ChangeNotifier {
       snoreTimeline: snoreResult.snoreTimeline.isEmpty
           ? old.snoreTimeline
           : snoreResult.snoreTimeline,
+
+      // 새 녹음이 있으면 새 TOP 5 클립 사용, 없으면 기존 클립 유지
+      snoreAudioClips: snoreResult.audioClips.isEmpty
+          ? old.snoreAudioClips
+          : snoreResult.audioClips,
 
       // 수면 단계는 Health Connect 값 유지
       stages: old.stages,
@@ -589,6 +657,9 @@ SleepRecord _emptyRecord() {
     noiseDb: 0,
     stages: const [],
     snoreTimeline: const [],
+
+    // 빈 기록에서는 녹음 클립 없음
+    snoreAudioClips: const [],
   );
 }
 
