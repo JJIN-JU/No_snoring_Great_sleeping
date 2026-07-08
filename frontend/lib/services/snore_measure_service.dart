@@ -1,8 +1,12 @@
+import 'dart:io';
 import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:noise_meter/noise_meter.dart';
 import 'package:permission_handler/permission_handler.dart';
+
+import 'package:record/record.dart';
+import 'snore_classification_service.dart';
 
 import '../models/sleep_data.dart';
 
@@ -40,6 +44,9 @@ class SnoreMeasureResult {
 
 class SnoreMeasureService {
   final NoiseMeter _noiseMeter = NoiseMeter();
+  final AudioRecorder _recorder = AudioRecorder();
+  final AIService _aiService = AIService();
+  bool _isRecording = false;
 
   StreamSubscription<NoiseReading>? _subscription;
 
@@ -200,6 +207,52 @@ class SnoreMeasureService {
     _snoreCount = 0;
 
     _inSnoreSection = false;
+  }
+
+  Future<void> _recordAndPredict(String userId) async {
+    if (_isRecording) return;
+
+    _isRecording = true;
+
+    try {
+
+      final filePath =
+          "${Directory.systemTemp.path}/snore.wav";
+
+      await _recorder.start(
+       const RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+        ),
+        path: filePath,
+      );
+
+      await Future.delayed(
+        const Duration(seconds: 1),
+      );
+
+      final path = await _recorder.stop();
+
+      if (path == null) return;
+
+      final result = await _aiService.predict(
+        userId: userId,
+       wavFile: File(path),
+      );
+
+      print(result);
+
+    } catch (e) {
+
+      print(e);
+
+    } finally {
+
+      _isRecording = false;
+
+    }
+
   }
 
   static String _formatTime(DateTime time) {

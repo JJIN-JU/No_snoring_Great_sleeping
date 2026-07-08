@@ -1,11 +1,20 @@
+import tempfile
+import os
+
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    UploadFile,
+    File,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.database import users_collection
+from app.model_service import predict
 
 from app.database import (
     users_collection,
@@ -159,3 +168,63 @@ def get_users():
             for user in users
         ],
     }
+
+@app.post("/predict")
+async def predict_audio(
+    user_id: str = Form(...),
+    timestamp: Optional[str] = Form(None),
+    file: UploadFile = File(...)
+):
+
+    temp_path = None
+
+    try:
+
+        # 업로드한 wav를 임시 저장
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".wav"
+        ) as temp:
+
+            temp.write(await file.read())
+            temp_path = temp.name
+
+        # AI 추론
+        result = predict(temp_path)
+
+        # 코골이 또는 잡음이 있는 경우만 저장
+        if result["snoring"] or result["has_noise"]:
+
+            snore_events.insert_one({
+
+                "user_id": user_id,
+
+                "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
+
+                "snoring": result["snoring"],
+
+                "created_at": datetime.now(timezone.utc).isoformat(),
+
+                "snoring_probability": result["snoring_probability"],
+
+                "has_noise": result["has_noise"],
+
+                "noise": result["noise"]
+
+            })
+
+        return {
+            **result,
+            "timestamp": timestamp or now}
+            
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+    finally:
+
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
