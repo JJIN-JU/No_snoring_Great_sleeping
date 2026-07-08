@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_DIR = BASE_DIR / "models"
 
 # =========모델 로드=========
-binary_model = load_model(MODEL_DIR / "librosa_binary_adam.keras")
+binary_model = load_model(MODEL_DIR / "librosa_binary_baseline.keras")
 multilabel_model = load_model(MODEL_DIR / "librosa_binary_adam_multi.keras")
 
 # =========LABEL=========
