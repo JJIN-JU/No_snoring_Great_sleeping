@@ -485,7 +485,7 @@ class _HealthSyncInfo extends StatelessWidget {
   });
 
   Future<void> _refresh(BuildContext context) async {
-    await state.loadHealthConnectSleep();
+    await state.refreshAllHealthData();
 
     if (!context.mounted) return;
 
