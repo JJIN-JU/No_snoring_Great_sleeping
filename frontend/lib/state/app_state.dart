@@ -70,6 +70,10 @@ class AppState extends ChangeNotifier {
   String? healthError;
   DateTime? lastHealthSyncAt;
 
+  bool apneaLoading = false;
+  String? apneaError;
+  List<ApneaRiskSummary> apneaHistory = [];
+
   // 샘플 데이터 없음
   // Health Connect 수면 데이터 또는 폰 마이크 측정 데이터가 들어올 때만 records에 추가됨
   final List<SleepRecord> _records = [];
@@ -351,6 +355,36 @@ class AppState extends ChangeNotifier {
       healthLoading = false;
       notifyListeners();
     }
+  }
+
+  // =========================
+  // Health Connect 산소포화도/호흡 데이터 불러오기
+  // =========================
+
+  Future<void> loadApneaRiskHistory({int nights = 7}) async {
+    if (apneaLoading) return;
+
+    apneaLoading = true;
+    apneaError = null;
+    notifyListeners();
+
+    try {
+      final service = HealthConnectService();
+      apneaHistory = await service.fetchApneaRiskHistory(nights: nights);
+    } catch (e) {
+      apneaError = e.toString();
+      apneaHistory = [];
+    } finally {
+      apneaLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// 수면 데이터와 무호흡 위험(SpO2/호흡수) 데이터를 함께 갱신한다.
+  /// 수면 탭의 "Health Connect 불러오기" 버튼에서 이 함수를 호출하면 된다.
+  Future<void> refreshAllHealthData({int nights = 7}) async {
+    await loadHealthConnectSleep(nights: nights);
+    await loadApneaRiskHistory(nights: nights);
   }
 
   // =========================
