@@ -143,6 +143,9 @@ class AppState extends ChangeNotifier {
       loginLoading = false;
       notifyListeners();
     }
+    if (loggedIn) {
+      await refreshAllHealthData();
+    }
   }
 
   Future<void> logout() async {
