@@ -46,8 +46,7 @@ class SnoringTab extends StatelessWidget {
     final r = state.current;
     final timeline = r.snoreTimeline;
 
-    final snoreMinutes =
-        ((r.snoreHours - r.snoreHours.floor()) * 60).round();
+    final snoreMinutes = ((r.snoreHours - r.snoreHours.floor()) * 60).round();
 
     final snorePercent = _safeSnorePercent(
       r.snoreHours,
@@ -75,7 +74,6 @@ class SnoringTab extends StatelessWidget {
             ),
           ),
         ),
-
         if (state.measuring)
           AppCard(
             child: Row(
@@ -97,9 +95,7 @@ class SnoringTab extends StatelessWidget {
               ],
             ),
           ),
-
         if (state.measuring) const SizedBox(height: 16),
-
         if (state.snoreError != null)
           Container(
             padding: const EdgeInsets.all(14),
@@ -118,9 +114,7 @@ class SnoringTab extends StatelessWidget {
               ),
             ),
           ),
-
         if (state.snoreError != null) const SizedBox(height: 16),
-
         AppCard(
           child: Column(
             children: [
@@ -157,9 +151,7 @@ class SnoringTab extends StatelessWidget {
             ],
           ),
         ),
-
         const SizedBox(height: 16),
-
         Row(
           children: [
             Expanded(
@@ -183,9 +175,7 @@ class SnoringTab extends StatelessWidget {
             ),
           ],
         ),
-
         const SizedBox(height: 12),
-
         Row(
           children: [
             Expanded(
@@ -209,16 +199,13 @@ class SnoringTab extends StatelessWidget {
             ),
           ],
         ),
-
         const SizedBox(height: 16),
-
         AppCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SectionTitle('시간대별 코골이 강도 (dB)'),
               const SizedBox(height: 8),
-
               if (timeline.isEmpty)
                 const SizedBox(
                   height: 180,
@@ -288,9 +275,7 @@ class SnoringTab extends StatelessWidget {
 
                               final i = v.toInt();
 
-                              if (i < 0 ||
-                                  i >= timeline.length ||
-                                  i % 3 != 0) {
+                              if (i < 0 || i >= timeline.length || i % 3 != 0) {
                                 return const SizedBox.shrink();
                               }
 
@@ -341,9 +326,7 @@ class SnoringTab extends StatelessWidget {
             ],
           ),
         ),
-
         const SizedBox(height: 16),
-
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -362,7 +345,7 @@ class SnoringTab extends StatelessWidget {
               SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  '옆으로 누워 자면 코골이가 줄어듭니다. 취침 전 음주와 과식을 피해보세요.',
+                  '옆으로 누워 자면 코골이가 줄어듭니다.\n취침 전 음주와 과식을 피해보세요.',
                   style: TextStyle(
                     color: AppColors.foreground,
                     fontSize: 13,
