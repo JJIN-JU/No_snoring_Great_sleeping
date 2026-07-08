@@ -243,10 +243,40 @@ def get_users():
 # 코골이 AI 예측 + DB 저장
 # =========================
 
+def result_has_snoring(result: dict) -> bool:
+    """
+    binary 모델 결과, multi-label Snoring 라벨, 확률값을 모두 고려해서
+    최종적으로 코골이 여부를 판단한다.
+    """
+    if bool(result.get("snoring")):
+        return True
+
+    noise = result.get("noise", [])
+
+    if isinstance(noise, list):
+        for item in noise:
+            if not isinstance(item, dict):
+                continue
+
+            label = str(item.get("label", "")).lower()
+
+            if label == "snoring":
+                return True
+
+    try:
+        probability = float(result.get("snoring_probability") or 0)
+    except Exception:
+        probability = 0
+
+    # 앱 화면 판별과 맞추기 위한 기준. 필요하면 0.60 / 0.75로 올려도 됨.
+    return probability >= 0.50
+
+
 @app.post("/predict")
 async def predict_audio(
     user_id: str = Form(...),
     timestamp: Optional[str] = Form(None),
+    save: bool = Form(True),
     file: UploadFile = File(...),
 ):
     temp_path = None
@@ -282,14 +312,14 @@ async def predict_audio(
         # 2. AI 추론
         result = predict(temp_path)
 
-        should_save = bool(result.get("snoring"))
+        should_save = result_has_snoring(result)
         
         event_id = None
         saved = False
         audio_filename = None
 
-        # 3. 코골이 또는 의미 있는 소음이 있는 경우만 DB + 서버 파일 저장
-        if should_save:
+        # 3. save=true이고, AI가 코골이라고 판단한 경우만 DB + 서버 파일 저장
+        if save and should_save:
             audio_filename = (
                 f"snore_{now.strftime('%Y%m%d_%H%M%S')}_"
                 f"{uuid4().hex}{original_suffix}"
@@ -307,7 +337,7 @@ async def predict_audio(
                 # 반드시 datetime 타입이어야 함.
                 "created_at": now,
 
-                "snoring": bool(result.get("snoring")),
+                "snoring": bool(should_save),
                 "snoring_probability": result.get("snoring_probability"),
                 "has_noise": bool(result.get("has_noise")),
                 "noise": result.get("noise", []),

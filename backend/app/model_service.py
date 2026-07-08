@@ -29,7 +29,7 @@ LABELS = [
 ]
 
 # ========= Threshold =========
-BINARY_THRESHOLD = 0.75
+BINARY_THRESHOLD = 0.5
 
 MULTI_THRESHOLDS = {
     "Snoring": 0.50,
