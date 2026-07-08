@@ -1,8 +1,10 @@
 import 'dart:math' as math;
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
+import '../models/sleep_data.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -141,7 +143,8 @@ class SnoringTab extends StatelessWidget {
         r.snoreHours > 0 ||
         r.avgSnoreDb > 0 ||
         r.maxSnoreDb > 0 ||
-        timeline.isNotEmpty;
+        timeline.isNotEmpty ||
+        r.snoreAudioClips.isNotEmpty;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -170,9 +173,7 @@ class SnoringTab extends StatelessWidget {
               Row(
                 children: [
                   Icon(
-                    isMeasuring
-                        ? Icons.mic_rounded
-                        : Icons.bedtime_rounded,
+                    isMeasuring ? Icons.mic_rounded : Icons.bedtime_rounded,
                     color: isMeasuring ? AppColors.pink : AppColors.primary,
                     size: 30,
                   ),
@@ -299,8 +300,9 @@ class SnoringTab extends StatelessWidget {
                               isMeasuring
                                   ? Icons.graphic_eq_rounded
                                   : Icons.hotel_rounded,
-                              color:
-                                  isMeasuring ? AppColors.pink : AppColors.primary,
+                              color: isMeasuring
+                                  ? AppColors.pink
+                                  : AppColors.primary,
                               size: 36,
                             ),
                             const SizedBox(height: 10),
@@ -674,6 +676,15 @@ class SnoringTab extends StatelessWidget {
 
         const SizedBox(height: 16),
 
+        // =========================
+        // 감지된 코골이 녹음 재생 카드
+        // =========================
+        _SnoreAudioClipCard(
+          clips: r.snoreAudioClips,
+        ),
+
+        const SizedBox(height: 16),
+
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -705,6 +716,197 @@ class SnoringTab extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+class _SnoreAudioClipCard extends StatefulWidget {
+  final List<SnoreAudioClip> clips;
+
+  const _SnoreAudioClipCard({
+    required this.clips,
+  });
+
+  @override
+  State<_SnoreAudioClipCard> createState() => _SnoreAudioClipCardState();
+}
+
+class _SnoreAudioClipCardState extends State<_SnoreAudioClipCard> {
+  final AudioPlayer _player = AudioPlayer();
+
+  String? _playingPath;
+  bool _isPlaying = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _player.onPlayerComplete.listen((_) {
+      if (!mounted) return;
+
+      setState(() {
+        _playingPath = null;
+        _isPlaying = false;
+      });
+    });
+
+    _player.onPlayerStateChanged.listen((playerState) {
+      if (!mounted) return;
+
+      setState(() {
+        _isPlaying = playerState == PlayerState.playing;
+      });
+    });
+  }
+
+  Future<void> _togglePlay(SnoreAudioClip clip) async {
+    try {
+      if (_playingPath == clip.path && _isPlaying) {
+        await _player.pause();
+        return;
+      }
+
+      await _player.stop();
+
+      setState(() {
+        _playingPath = clip.path;
+        _isPlaying = false;
+      });
+
+      await _player.play(
+        DeviceFileSource(clip.path),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _isPlaying = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _playingPath = null;
+        _isPlaying = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('녹음 파일을 재생할 수 없습니다: $e'),
+        ),
+      );
+    }
+  }
+
+  String _durationText(int seconds) {
+    final min = seconds ~/ 60;
+    final sec = seconds % 60;
+
+    if (min <= 0) {
+      return '$sec초';
+    }
+
+    return '$min분 $sec초';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionTitle('감지된 코골이 녹음'),
+          const SizedBox(height: 8),
+          if (widget.clips.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 28),
+              child: Center(
+                child: Text(
+                  '아직 저장된 코골이 녹음이 없습니다.',
+                  style: TextStyle(
+                    color: AppColors.muted,
+                  ),
+                ),
+              ),
+            )
+          else
+            ...widget.clips.asMap().entries.map((entry) {
+              final index = entry.key;
+              final clip = entry.value;
+              final playingThis = _playingPath == clip.path && _isPlaying;
+
+              return Container(
+                margin: EdgeInsets.only(
+                  bottom: index == widget.clips.length - 1 ? 0 : 10,
+                ),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.background.withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: AppColors.border,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    InkWell(
+                      onTap: () => _togglePlay(clip),
+                      borderRadius: BorderRadius.circular(999),
+                      child: CircleAvatar(
+                        radius: 23,
+                        backgroundColor:
+                            playingThis ? AppColors.pink : AppColors.primary,
+                        child: Icon(
+                          playingThis
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                          color: Colors.white,
+                          size: 30,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${clip.time} 감지',
+                            style: const TextStyle(
+                              color: AppColors.foreground,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${_durationText(clip.durationSeconds)} · 평균 ${clip.avgDb.round()}dB · 최대 ${clip.maxDb.round()}dB',
+                            style: const TextStyle(
+                              color: AppColors.muted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(
+                      Icons.graphic_eq_rounded,
+                      color: AppColors.pink,
+                      size: 22,
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _player.stop();
+    _player.dispose();
+    super.dispose();
   }
 }
 
