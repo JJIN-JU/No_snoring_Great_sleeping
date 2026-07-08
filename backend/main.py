@@ -9,6 +9,7 @@ from fastapi import (
     HTTPException,
     UploadFile,
     File,
+    Form,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
