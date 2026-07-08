@@ -42,7 +42,7 @@ MULTI_THRESHOLDS = {
 }
 
 # =========모델=========
-def predict(filepath):
+def predict(filepath: str) -> dict:
 
     # MFCC 생성
     mfcc = extract_librosa_mfcc(filepath)
@@ -75,11 +75,11 @@ def predict(filepath):
 
     for label, prob in zip(LABELS, multi_probability):
 
-        if prob >= MULTI_THRESHOLD:
+        if prob >= MULTI_THRESHOLDS[label]:
 
             detected_noise.append({
                 "label": label,
-                "probability": float(prob)
+                "probability": round(float(prob), 4)
             })
 
 
