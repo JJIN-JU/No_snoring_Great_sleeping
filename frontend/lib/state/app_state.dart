@@ -12,6 +12,10 @@ import '../services/snore_measure_service.dart';
 import '../theme.dart';
 
 class AppState extends ChangeNotifier {
+  // AI 판별 결과를 화면/DB에 반영할 최소 확률.
+  // 모델이 snoring=false를 반환해도 확률이 이 값 이상이면 코골이 후보로 인정.
+  static const double aiSnoringProbabilityThreshold = 0.50;
+
   // =========================
   // 로그인 상태
   // =========================
@@ -52,6 +56,9 @@ class AppState extends ChangeNotifier {
   final SnoreMeasureService _snoreMeasureService = SnoreMeasureService();
 
   String? snoreError;
+
+  // AI 모델이 각 10초 녹음을 어떻게 판단했는지 화면에 보여주는 디버그 문구
+  String? snoreAiDebugText;
 
   bool get snoreRecording => _snoreMeasureService.isRunning;
 
@@ -355,6 +362,7 @@ class AppState extends ChangeNotifier {
 
     try {
       snoreError = null;
+      snoreAiDebugText = null;
 
       await _snoreMeasureService.start();
 
@@ -383,10 +391,18 @@ class AppState extends ChangeNotifier {
     if (!measuring) return;
 
     _timer?.cancel();
+    _timer = null;
 
-    final snoreResult = await _snoreMeasureService.stop();
+    final rawSnoreResult = await _snoreMeasureService.stop();
 
     measuring = false;
+    measuredElapsed = Duration.zero;
+
+    // 핵심:
+    // 10초 녹음 조각을 AI 모델로 판별하고,
+    // snoring=true인 것 중 max dB 높은 TOP 5만 화면/DB에 남긴다.
+    // TOP 5는 다시 과거순으로 정렬해서 보여준다.
+    final snoreResult = await _classifyTop5SnoreClips(rawSnoreResult);
 
     if (_records.isNotEmpty) {
       // Health Connect 수면 기록이 있으면 그 기록에 코골이 측정값만 덮어씀
@@ -397,37 +413,137 @@ class AppState extends ChangeNotifier {
     }
 
     selectedIndex = 0;
-    measuredElapsed = Duration.zero;
     _measureStartedAt = null;
-
-    notifyListeners();
-
-    // 핵심 추가:
-    // 화면에는 TOP 5만 남은 상태이고, 그 TOP 5만 서버로 업로드
-    await _uploadSnoreClipsToServer(snoreResult);
 
     notifyListeners();
   }
 
-  Future<void> _uploadSnoreClipsToServer(
-    SnoreMeasureResult snoreResult,
+  Future<SnoreMeasureResult> _classifyTop5SnoreClips(
+    SnoreMeasureResult rawResult,
   ) async {
-    if (userId == null || userId!.isEmpty) {
-      return;
+    if (rawResult.audioClips.isEmpty) {
+      snoreAiDebugText = 'AI 판별 결과: 분석할 10초 녹음 조각이 없습니다. 최소 12초 이상 측정해보세요.';
+      return rawResult;
     }
 
-    if (snoreResult.audioClips.isEmpty) {
-      return;
+    if (userId == null || userId!.isEmpty) {
+      snoreError = '코골이 AI 판별을 하려면 카카오 로그인이 필요합니다.';
+      snoreAiDebugText = 'AI 판별 불가: userId가 없습니다. 카카오 로그인과 DB 사용자 저장을 먼저 확인하세요.';
+      await _deleteLocalClipFiles(rawResult.audioClips);
+      return _buildResultWithAiClips(
+        rawResult: rawResult,
+        aiDetectedClips: const [],
+        top5Clips: const [],
+      );
     }
 
     final aiService = AIService();
+    final detected = <_ClassifiedSnoreClip>[];
+    final debugLines = <String>[];
 
-    var uploadedCount = 0;
     Object? lastError;
 
-    for (final clip in snoreResult.audioClips) {
+    // 1. 모든 10초 조각을 AI로 판별만 한다. save=false라서 DB 저장 안 됨.
+    for (var i = 0; i < rawResult.audioClips.length; i++) {
+      final clip = rawResult.audioClips[i];
+
       try {
         final file = File(clip.path);
+
+        if (!await file.exists()) {
+          continue;
+        }
+
+        final result = await aiService.predict(
+          userId: userId!,
+          wavFile: file,
+          save: false,
+        );
+
+        final probability = _toDouble(result['snoring_probability']);
+        final isSnoring = _isAiSnoringResult(result);
+        final noiseText = _noiseLabelsText(result['noise']);
+        final judgmentText = isSnoring ? '코골이 O' : '코골이 X';
+
+        debugLines.add(
+          '${i + 1}. ${clip.time} / ${clip.durationSeconds}초 / '
+          '평균 ${clip.avgDb.toStringAsFixed(1)}dB / '
+          '최대 ${clip.maxDb.toStringAsFixed(1)}dB / '
+          'AI확률 ${probability.toStringAsFixed(4)} / '
+          '판정 $judgmentText / '
+          'noise: $noiseText',
+        );
+
+        if (isSnoring) {
+          detected.add(
+            _ClassifiedSnoreClip(
+              index: i,
+              clip: clip,
+              probability: probability,
+            ),
+          );
+        }
+      } catch (e) {
+        lastError = e;
+        debugLines.add(
+          '${i + 1}. ${clip.time} / ${clip.durationSeconds}초 / AI 호출 실패: $e',
+        );
+      }
+    }
+
+    if (detected.isEmpty) {
+      snoreAiDebugText = 'AI 판별 결과\n'
+          '총 ${rawResult.audioClips.length}개 조각 분석 / 코골이 0개\n'
+          '기준 확률: ${aiSnoringProbabilityThreshold.toStringAsFixed(2)}\n\n'
+          '${debugLines.join('\n')}';
+
+      if (lastError != null) {
+        snoreError = '코골이 AI 판별 실패: $lastError';
+      } else {
+        snoreError = 'AI가 코골이로 판단한 10초 녹음이 없습니다. 아래 AI 판별 결과를 확인해보세요.';
+      }
+
+      await _deleteLocalClipFiles(rawResult.audioClips);
+
+      return _buildResultWithAiClips(
+        rawResult: rawResult,
+        aiDetectedClips: const [],
+        top5Clips: const [],
+      );
+    }
+
+    // 2. AI가 코골이라고 본 것 중에서 max dB 높은 TOP 5를 고른다.
+    final top5 = detected.toList()
+      ..sort((a, b) {
+        final dbCompare = b.clip.maxDb.compareTo(a.clip.maxDb);
+        if (dbCompare != 0) return dbCompare;
+
+        // dB가 같으면 더 과거 조각 우선
+        return a.index.compareTo(b.index);
+      });
+
+    final selected = top5.take(5).toList()
+      // 3. 화면에는 과거순으로 보여준다.
+      ..sort((a, b) => a.index.compareTo(b.index));
+
+    final selectedClips = selected.map((item) => item.clip).toList();
+
+    snoreAiDebugText = 'AI 판별 결과\n'
+        '총 ${rawResult.audioClips.length}개 조각 분석 / '
+        '코골이 ${detected.length}개 / 화면 표시 TOP ${selected.length}개\n'
+        '기준 확률: ${aiSnoringProbabilityThreshold.toStringAsFixed(2)}\n\n'
+        '${debugLines.join('\n')}';
+
+    // 4. 선택되지 않은 로컬 10초 파일은 삭제한다.
+    await _deleteUnselectedLocalClips(
+      allClips: rawResult.audioClips,
+      selectedClips: selectedClips,
+    );
+
+    // 5. TOP 5만 save=true로 다시 보내서 DB에 저장한다.
+    for (final item in selected) {
+      try {
+        final file = File(item.clip.path);
 
         if (!await file.exists()) {
           continue;
@@ -436,22 +552,173 @@ class AppState extends ChangeNotifier {
         await aiService.predict(
           userId: userId!,
           wavFile: file,
+          save: true,
         );
-
-        uploadedCount++;
       } catch (e) {
         lastError = e;
       }
     }
 
     if (lastError != null) {
-      snoreError = '일부 코골이 녹음 DB 저장 실패: $lastError';
-      return;
-    }
-
-    if (uploadedCount > 0) {
+      snoreError = '일부 코골이 AI 판별 또는 DB 저장 실패: $lastError';
+    } else {
       snoreError = null;
     }
+
+    return _buildResultWithAiClips(
+      rawResult: rawResult,
+      aiDetectedClips: detected.map((item) => item.clip).toList(),
+      top5Clips: selectedClips,
+    );
+  }
+
+  SnoreMeasureResult _buildResultWithAiClips({
+    required SnoreMeasureResult rawResult,
+    required List<SnoreAudioClip> aiDetectedClips,
+    required List<SnoreAudioClip> top5Clips,
+  }) {
+    if (aiDetectedClips.isEmpty) {
+      return SnoreMeasureResult(
+        avgSnoreDb: 0,
+        maxSnoreDb: 0,
+        snoreHours: 0,
+        snoreFreqHz: 0,
+        snoreCount: 0,
+        noiseDb: rawResult.noiseDb,
+        snoreTimeline: rawResult.snoreTimeline,
+        audioClips: top5Clips,
+      );
+    }
+
+    final avgDb = aiDetectedClips.fold<double>(
+          0,
+          (sum, clip) => sum + clip.avgDb,
+        ) /
+        aiDetectedClips.length;
+
+    final maxDb = aiDetectedClips.fold<double>(
+      0,
+      (maxValue, clip) {
+        if (clip.maxDb > maxValue) return clip.maxDb;
+        return maxValue;
+      },
+    );
+
+    final totalSeconds = aiDetectedClips.fold<int>(
+      0,
+      (sum, clip) => sum + clip.durationSeconds,
+    );
+
+    return SnoreMeasureResult(
+      avgSnoreDb: double.parse(avgDb.toStringAsFixed(1)),
+      maxSnoreDb: double.parse(maxDb.toStringAsFixed(1)),
+      snoreHours: double.parse((totalSeconds / 3600).toStringAsFixed(2)),
+      snoreFreqHz: rawResult.snoreFreqHz,
+      // AI가 코골이로 감지한 10초 조각 수
+      snoreCount: aiDetectedClips.length,
+      noiseDb: rawResult.noiseDb,
+      snoreTimeline: rawResult.snoreTimeline,
+      // 화면에는 TOP 5만 표시
+      audioClips: top5Clips,
+    );
+  }
+
+  Future<void> _deleteUnselectedLocalClips({
+    required List<SnoreAudioClip> allClips,
+    required List<SnoreAudioClip> selectedClips,
+  }) async {
+    final selectedPaths = selectedClips.map((clip) => clip.path).toSet();
+
+    for (final clip in allClips) {
+      if (selectedPaths.contains(clip.path)) {
+        continue;
+      }
+
+      try {
+        final file = File(clip.path);
+
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {
+        // 삭제 실패해도 앱 흐름에는 영향 없게 무시
+      }
+    }
+  }
+
+  Future<void> _deleteLocalClipFiles(
+    List<SnoreAudioClip> clips,
+  ) async {
+    for (final clip in clips) {
+      try {
+        final file = File(clip.path);
+
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {
+        // 삭제 실패해도 앱 흐름에는 영향 없게 무시
+      }
+    }
+  }
+
+  String _noiseLabelsText(dynamic noise) {
+    if (noise is! List || noise.isEmpty) {
+      return '-';
+    }
+
+    final labels = <String>[];
+
+    for (final item in noise) {
+      if (item is Map) {
+        final label = item['label']?.toString();
+        final probability = _toDouble(item['probability']);
+
+        if (label != null && label.isNotEmpty) {
+          labels.add('$label(${probability.toStringAsFixed(3)})');
+        }
+      }
+    }
+
+    if (labels.isEmpty) {
+      return '-';
+    }
+
+    return labels.join(', ');
+  }
+
+  bool _isAiSnoringResult(Map<String, dynamic> result) {
+    // 1. binary 모델 결과가 true면 코골이
+    if (result['snoring'] == true) {
+      return true;
+    }
+
+    // 2. multi-label 모델의 noise 목록에 Snoring이 있으면 코골이
+    final noise = result['noise'];
+
+    if (noise is List) {
+      for (final item in noise) {
+        if (item is Map) {
+          final label = item['label']?.toString().toLowerCase();
+
+          if (label == 'snoring') {
+            return true;
+          }
+        }
+      }
+    }
+
+    // 3. binary 확률값이 기준 이상이면 코골이 후보로 인정
+    final probability = _toDouble(result['snoring_probability']);
+
+    return probability >= aiSnoringProbabilityThreshold;
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0;
+    return 0;
   }
 
   void _addSnoreOnlyRecord(SnoreMeasureResult snoreResult) {
@@ -480,7 +747,7 @@ class AppState extends ChangeNotifier {
         totalSleepHours: 0,
         targetSleepHours: _parseHours(bedtimeTarget, wakeTarget),
 
-        // 실제 폰 마이크 측정 결과
+        // 실제 폰 마이크 측정 결과. AI 판별 후 재계산된 값이 들어옴.
         avgSnoreDb: snoreResult.avgSnoreDb,
         maxSnoreDb: snoreResult.maxSnoreDb,
         snoreHours: snoreResult.snoreHours,
@@ -489,8 +756,7 @@ class AppState extends ChangeNotifier {
         noiseDb: snoreResult.noiseDb,
         snoreTimeline: timeline,
 
-        // 감지된 코골이 녹음 클립 저장
-        // 여기에는 이미 10분 단위 대표 TOP 5만 들어옴
+        // AI가 코골이로 판별한 10초 조각 중 max dB TOP 5만 저장
         snoreAudioClips: snoreResult.audioClips,
 
         // 수면 단계는 Health Connect에서 받아오기 전까지 비워둠
@@ -516,7 +782,7 @@ class AppState extends ChangeNotifier {
       totalSleepHours: old.totalSleepHours,
       targetSleepHours: old.targetSleepHours,
 
-      // 실제 폰 마이크 측정값
+      // 실제 폰 마이크 측정값. AI 판별 후 재계산된 값이 들어옴.
       avgSnoreDb: snoreResult.avgSnoreDb,
       maxSnoreDb: snoreResult.maxSnoreDb,
       snoreHours: snoreResult.snoreHours,
@@ -527,7 +793,7 @@ class AppState extends ChangeNotifier {
           ? old.snoreTimeline
           : snoreResult.snoreTimeline,
 
-      // 새 녹음이 있으면 새 TOP 5 클립 사용, 없으면 기존 클립 유지
+      // 새 녹음이 있으면 AI 판별 TOP 5 사용, 없으면 기존 클립 유지
       snoreAudioClips: snoreResult.audioClips.isEmpty
           ? old.snoreAudioClips
           : snoreResult.audioClips,
@@ -631,6 +897,18 @@ class AppState extends ChangeNotifier {
     _snoreMeasureService.cancel();
     super.dispose();
   }
+}
+
+class _ClassifiedSnoreClip {
+  final int index;
+  final SnoreAudioClip clip;
+  final double probability;
+
+  const _ClassifiedSnoreClip({
+    required this.index,
+    required this.clip,
+    required this.probability,
+  });
 }
 
 // =========================
