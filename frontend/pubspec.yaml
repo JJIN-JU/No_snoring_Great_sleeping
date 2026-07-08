@@ -17,6 +17,7 @@ dependencies:
   permission_handler: ^12.0.3
   kakao_flutter_sdk_user: ^1.9.7
   http: ^1.6.0
+  record: ^6.1.1
 
 dev_dependencies:
   flutter_test:
