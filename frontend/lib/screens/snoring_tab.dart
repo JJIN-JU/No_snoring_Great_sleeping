@@ -412,6 +412,30 @@ class SnoringTab extends StatelessWidget {
         if (state.snoreError != null) const SizedBox(height: 16),
 
         // =========================
+        // AI 판별 결과 디버그 표시
+        // =========================
+        if (state.snoreAiDebugText != null)
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionTitle('AI 판별 결과'),
+                const SizedBox(height: 10),
+                SelectableText(
+                  state.snoreAiDebugText!,
+                  style: const TextStyle(
+                    color: AppColors.muted,
+                    height: 1.45,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+        if (state.snoreAiDebugText != null) const SizedBox(height: 16),
+
+        // =========================
         // 측정 전 안내
         // =========================
         if (!hasReport && !isMeasuring)
