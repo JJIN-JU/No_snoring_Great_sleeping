@@ -89,8 +89,9 @@ class SnoreMeasureService {
   static const double snoreThresholdDb = 45.0;
   static const double snoreEndThresholdDb = 42.0;
 
-  /// AI 판별용으로 10초 단위 녹음 파일을 만든다.
-  static const Duration segmentDuration = Duration(seconds: 10);
+  /// AI 판별용으로 5초 단위 녹음 파일을 만든다.
+  /// 학습 데이터(5초, 48000Hz, 스테레오)와 스펙을 맞춤.
+  static const Duration segmentDuration = Duration(seconds: 5);
 
   /// 그래프 점 저장 간격.
   static const Duration timelineInterval = Duration(seconds: 30);
@@ -221,8 +222,8 @@ class SnoreMeasureService {
         extension: 'wav',
         config: RecordConfig(
           encoder: AudioEncoder.wav,
-          sampleRate: 16000,
-          numChannels: 1,
+          sampleRate: 48000,
+          numChannels: 2,
         ),
       );
     }
@@ -235,8 +236,8 @@ class SnoreMeasureService {
         config: RecordConfig(
           encoder: AudioEncoder.aacLc,
           bitRate: 64000,
-          sampleRate: 16000,
-          numChannels: 1,
+          sampleRate: 48000,
+          numChannels: 2,
         ),
       );
     }
@@ -393,9 +394,8 @@ class SnoreMeasureService {
 
     final avgDb = _meanDbValues.reduce((a, b) => a + b) / _meanDbValues.length;
 
-    final avgSnoreDbValues = _meanDbValues
-        .where((db) => db >= snoreThresholdDb)
-        .toList();
+    final avgSnoreDbValues =
+        _meanDbValues.where((db) => db >= snoreThresholdDb).toList();
 
     final avgSnoreDb = avgSnoreDbValues.isEmpty
         ? avgDb
