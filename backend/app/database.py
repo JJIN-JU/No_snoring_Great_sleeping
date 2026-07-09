@@ -1,5 +1,6 @@
 import os
 
+import gridfs
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
@@ -19,6 +20,10 @@ sleep_sessions = db["sleep_sessions"]
 snore_events = db["snore_events"]
 daily_stats = db["daily_stats"]
 
+# 코골이 오디오 파일 자체 저장용 GridFS
+# MongoDB Compass에서는 snore_audio.files / snore_audio.chunks 로 보임
+snore_audio_fs = gridfs.GridFS(db, collection="snore_audio")
+
 
 def ensure_snore_events_ttl_index():
     """
@@ -27,7 +32,7 @@ def ensure_snore_events_ttl_index():
     """
 
     target_index_name = "snore_events_7days_ttl"
-    ttl_seconds = 60 * 60 * 24 * 7  # 7일 = 604800초
+    ttl_seconds = 60 * 60 * 24 * 7
 
     indexes = list(snore_events.list_indexes())
 
@@ -35,7 +40,6 @@ def ensure_snore_events_ttl_index():
         index_name = index.get("name")
         key = list(index.get("key", {}).items())
 
-        # created_at 단일 인덱스인지 확인
         is_created_at_index = key == [("created_at", 1)]
 
         if not is_created_at_index:
@@ -43,14 +47,11 @@ def ensure_snore_events_ttl_index():
 
         expire_after = index.get("expireAfterSeconds")
 
-        # 이미 원하는 TTL 인덱스면 그대로 사용
         if index_name == target_index_name and expire_after == ttl_seconds:
             return
 
-        # 이름이 다르거나 TTL 옵션이 없거나 다르면 기존 인덱스 삭제
         snore_events.drop_index(index_name)
 
-    # TTL 인덱스 새로 생성
     snore_events.create_index(
         "created_at",
         expireAfterSeconds=ttl_seconds,
@@ -68,14 +69,18 @@ def create_indexes():
     sleep_sessions.create_index("date")
 
     snore_events.create_index("user_id")
+    snore_events.create_index("audio_file_id")
 
-    # 코골이 이벤트는 created_at 기준 7일 후 자동 삭제
     ensure_snore_events_ttl_index()
 
     daily_stats.create_index(
         [("user_id", 1), ("date", 1)],
         unique=True,
     )
+
+    # GridFS 파일 조회용 인덱스
+    db["snore_audio.files"].create_index("metadata.user_id")
+    db["snore_audio.files"].create_index("uploadDate")
 
 
 def check_db_connection():
