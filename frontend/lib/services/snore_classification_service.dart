@@ -1,4 +1,4 @@
-/// WAV 파일을 FastAPI에 보내고 결과를 받아옴
+/// 오디오 파일을 FastAPI에 보내고 AI 코골이 판별 결과를 받아옴
 
 import 'dart:convert';
 import 'dart:io';
@@ -7,24 +7,22 @@ import 'package:http/http.dart' as http;
 
 class AIService {
   static const String baseUrl =
-      "https://attitude-contamination-partially-coal.trycloudflare.com";
+      "https://lets-literally-communicate-say.trycloudflare.com";
 
   Future<Map<String, dynamic>> predict({
     required String userId,
     required File wavFile,
+    bool save = true,
   }) async {
     final request = http.MultipartRequest(
       "POST",
       Uri.parse("$baseUrl/predict"),
     );
 
-    // user_id 추가
     request.fields["user_id"] = userId;
-
-    // timestamp 추가
     request.fields["timestamp"] = DateTime.now().toIso8601String();
+    request.fields["save"] = save ? "true" : "false";
 
-    // wav 파일 추가
     request.files.add(
       await http.MultipartFile.fromPath(
         "file",
@@ -32,16 +30,20 @@ class AIService {
       ),
     );
 
-    // 요청 전송
     final streamedResponse = await request.send();
 
-    // 응답 읽기
     final response = await http.Response.fromStream(
       streamedResponse,
     );
 
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      final decoded = jsonDecode(response.body);
+
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+
+      throw Exception("AI 서버 응답 형식이 올바르지 않습니다.");
     }
 
     throw Exception(

@@ -8,6 +8,8 @@ import 'screens/home_screen.dart';
 import 'screens/splash_screen.dart';
 import 'theme.dart';
 
+import 'services/snore_notification_service.dart';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -16,6 +18,9 @@ Future<void> main() async {
   );
 
   await initializeDateFormatting('ko');
+
+  // 폰/워치 알림 초기화
+  await SnoreNotificationService.init();
 
   runApp(const SleepCareApp());
 }

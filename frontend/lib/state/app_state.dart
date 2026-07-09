@@ -1,15 +1,20 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../services/snore_notification_service.dart';
 import '../models/sleep_data.dart';
 import '../services/auth_api_service.dart';
 import '../services/health_connect_service.dart';
 import '../services/kakao_auth_service.dart';
+import '../services/snore_classification_service.dart';
 import '../services/snore_measure_service.dart';
 import '../theme.dart';
 
 class AppState extends ChangeNotifier {
+  static const double aiSnoringProbabilityThreshold = 0.005;
+
   // =========================
   // 로그인 상태
   // =========================
@@ -20,7 +25,6 @@ class AppState extends ChangeNotifier {
   bool loginLoading = false;
   String? loginError;
 
-  // MongoDB users 컬렉션의 _id
   String? userId;
 
   String? kakaoId;
@@ -50,6 +54,9 @@ class AppState extends ChangeNotifier {
   final SnoreMeasureService _snoreMeasureService = SnoreMeasureService();
 
   String? snoreError;
+  String? snoreAiDebugText;
+
+  DateTime? _lastSnoreNotificationAt;
 
   bool get snoreRecording => _snoreMeasureService.isRunning;
 
@@ -60,6 +67,13 @@ class AppState extends ChangeNotifier {
   bool healthLoading = false;
   String? healthError;
   DateTime? lastHealthSyncAt;
+
+  bool apneaLoading = false;
+  String? apneaError;
+  List<ApneaRiskSummary> apneaHistory = [];
+
+  // 화면에서 바로 확인하는 산소포화도 디버그 로그 (컴퓨터 없이 폰에서 확인용)
+  String? apneaDebugText;
 
   // 샘플 데이터 없음
   // Health Connect 수면 데이터 또는 폰 마이크 측정 데이터가 들어올 때만 records에 추가됨
@@ -100,12 +114,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 1. 카카오 로그인
       final kakaoResult = await KakaoAuthService().login();
 
-      // 2. 카카오 사용자 정보를 FastAPI 서버로 전송
-      // 3. FastAPI가 MongoDB users 컬렉션에 저장 또는 업데이트
-      // 4. 저장된 user_id 반환
       final savedUser = await AuthApiService().saveKakaoUser(kakaoResult);
 
       loggedIn = true;
@@ -114,9 +124,6 @@ class AppState extends ChangeNotifier {
       kakaoId = savedUser.kakaoId;
       kakaoEmail = savedUser.email;
       profileImageUrl = savedUser.profileImageUrl;
-
-      // 토큰은 앱 내부 로그인 상태 확인용으로만 보관
-      // DB에는 저장하지 않음
       kakaoAccessToken = kakaoResult.accessToken;
 
       userName = savedUser.nickname?.isNotEmpty == true
@@ -137,14 +144,16 @@ class AppState extends ChangeNotifier {
       loginLoading = false;
       notifyListeners();
     }
+
+    if (loggedIn) {
+      await refreshAllHealthData();
+    }
   }
 
   Future<void> logout() async {
     try {
       await KakaoAuthService().logout();
-    } catch (_) {
-      // 카카오 로그아웃 실패해도 앱 내부에서는 로그아웃 처리
-    }
+    } catch (_) {}
 
     _clearLoginState();
     notifyListeners();
@@ -164,13 +173,9 @@ class AppState extends ChangeNotifier {
         throw Exception('카카오 사용자 ID가 없어 DB 삭제를 진행할 수 없습니다.');
       }
 
-      // 1. FastAPI 서버에 DB 사용자 삭제 요청
       await AuthApiService().deleteKakaoUser(currentKakaoId);
-
-      // 2. 카카오 연결 해제
       await KakaoAuthService().unlink();
 
-      // 3. 앱 내부 로그인 상태 초기화
       _clearLoginState();
     } catch (e) {
       loginError = e.toString();
@@ -240,6 +245,7 @@ class AppState extends ChangeNotifier {
         noiseDb: old.noiseDb,
         stages: old.stages,
         snoreTimeline: old.snoreTimeline,
+        snoreAudioClips: old.snoreAudioClips,
       );
     }
 
@@ -263,8 +269,6 @@ class AppState extends ChangeNotifier {
 
       final targetHours = _parseHours(bedtimeTarget, wakeTarget);
 
-      // 같은 날짜의 기존 레코드가 있다면(폰 마이크로 측정한 코골이 값 등)
-      // 코골이 관련 필드는 최대한 유지한다.
       final oldByDate = <String, SleepRecord>{
         for (final r in _records) _dateKey(r.date): r,
       };
@@ -309,8 +313,6 @@ class AppState extends ChangeNotifier {
           wakeActual: wakeActual,
           totalSleepHours: totalSleepHours,
           targetSleepHours: targetHours,
-
-          // 코골이/소음 값은 Health Connect가 아니라 폰 마이크 측정값 유지
           avgSnoreDb: old?.avgSnoreDb ?? 0,
           maxSnoreDb: old?.maxSnoreDb ?? 0,
           snoreHours: old?.snoreHours ?? 0,
@@ -318,12 +320,11 @@ class AppState extends ChangeNotifier {
           snoreCount: old?.snoreCount ?? 0,
           noiseDb: old?.noiseDb ?? 0,
           snoreTimeline: old?.snoreTimeline ?? const [],
-
+          snoreAudioClips: old?.snoreAudioClips ?? const [],
           stages: stages,
         );
       }).toList();
 
-      // history는 이미 최신 -> 과거 순으로 정렬돼 있으므로 그대로 교체한다.
       _records
         ..clear()
         ..addAll(newRecords);
@@ -338,6 +339,31 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Future<void> loadApneaRiskHistory({int nights = 7}) async {
+    if (apneaLoading) return;
+
+    apneaLoading = true;
+    apneaError = null;
+    notifyListeners();
+
+    try {
+      final service = HealthConnectService();
+      apneaHistory = await service.fetchApneaRiskHistory(nights: nights);
+      apneaDebugText = service.apneaDebugLog.join('\n');
+    } catch (e) {
+      apneaError = e.toString();
+      apneaHistory = [];
+    } finally {
+      apneaLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> refreshAllHealthData({int nights = 7}) async {
+    await loadHealthConnectSleep(nights: nights);
+    await loadApneaRiskHistory(nights: nights);
+  }
+
   // =========================
   // 실제 마이크 기반 코골이/소음 측정
   // =========================
@@ -347,8 +373,12 @@ class AppState extends ChangeNotifier {
 
     try {
       snoreError = null;
+      snoreAiDebugText = null;
+      _lastSnoreNotificationAt = null;
 
-      await _snoreMeasureService.start();
+      await _snoreMeasureService.start(
+        onClipReady: _classifyClipAndNotifyDuringMeasurement,
+      );
 
       measuring = true;
       measuredElapsed = Duration.zero;
@@ -375,24 +405,396 @@ class AppState extends ChangeNotifier {
     if (!measuring) return;
 
     _timer?.cancel();
+    _timer = null;
 
-    final snoreResult = await _snoreMeasureService.stop();
+    final rawSnoreResult = await _snoreMeasureService.stop();
 
     measuring = false;
+    measuredElapsed = Duration.zero;
+
+    final snoreResult = await _classifyTop5SnoreClips(rawSnoreResult);
 
     if (_records.isNotEmpty) {
-      // Health Connect 수면 기록이 있으면 그 기록에 코골이 측정값만 덮어씀
       updateTodaySnoreData(snoreResult);
     } else {
-      // Health Connect 수면 기록이 아직 없으면 코골이 측정값만 들어간 기록 생성
       _addSnoreOnlyRecord(snoreResult);
     }
 
     selectedIndex = 0;
-    measuredElapsed = Duration.zero;
     _measureStartedAt = null;
 
     notifyListeners();
+  }
+
+  Future<void> _classifyClipAndNotifyDuringMeasurement(
+    SnoreAudioClip clip,
+  ) async {
+    if (!measuring) return;
+
+    if (userId == null || userId!.isEmpty) {
+      debugPrint('실시간 코골이 AI 판별 생략: userId 없음');
+      return;
+    }
+
+    try {
+      final file = File(clip.path);
+
+      if (!await file.exists()) {
+        debugPrint('실시간 코골이 AI 판별 생략: 파일 없음 ${clip.path}');
+        return;
+      }
+
+      final result = await AIService().predict(
+        userId: userId!,
+        wavFile: file,
+        save: false,
+      );
+
+      final probability = _toDouble(result['snoring_probability']);
+      final isSnoring = _isAiSnoringResult(result);
+
+      debugPrint(
+        '실시간 5초 조각 AI 판별: ${clip.time} / '
+        '확률 ${probability.toStringAsFixed(4)} / '
+        '${isSnoring ? '코골이 O' : '코골이 X'}',
+      );
+
+      if (isSnoring) {
+        await _notifySnoringIfNeeded(result);
+      }
+    } catch (e) {
+      debugPrint('실시간 코골이 AI 판별 실패: $e');
+    }
+  }
+
+  Future<SnoreMeasureResult> _classifyTop5SnoreClips(
+    SnoreMeasureResult rawResult,
+  ) async {
+    if (rawResult.audioClips.isEmpty) {
+      snoreAiDebugText = 'AI 판별 결과: 분석할 10초 녹음 조각이 없습니다. 최소 12초 이상 측정해보세요.';
+      return rawResult;
+    }
+
+    if (userId == null || userId!.isEmpty) {
+      snoreError = '코골이 AI 판별을 하려면 카카오 로그인이 필요합니다.';
+      snoreAiDebugText = 'AI 판별 불가: userId가 없습니다. 카카오 로그인과 DB 사용자 저장을 먼저 확인하세요.';
+
+      await _deleteLocalClipFiles(rawResult.audioClips);
+
+      return _buildResultWithAiClips(
+        rawResult: rawResult,
+        aiDetectedClips: const [],
+        top5Clips: const [],
+      );
+    }
+
+    final aiService = AIService();
+    final detected = <_ClassifiedSnoreClip>[];
+    final debugLines = <String>[];
+
+    Object? lastError;
+
+    for (var i = 0; i < rawResult.audioClips.length; i++) {
+      final clip = rawResult.audioClips[i];
+
+      try {
+        final file = File(clip.path);
+
+        if (!await file.exists()) {
+          continue;
+        }
+
+        final result = await aiService.predict(
+          userId: userId!,
+          wavFile: file,
+          save: false,
+        );
+
+        final probability = _toDouble(result['snoring_probability']);
+        final isSnoring = _isAiSnoringResult(result);
+        final noiseText = _noiseLabelsText(result['noise']);
+        final judgmentText = isSnoring ? '코골이 O' : '코골이 X';
+
+        debugLines.add(
+          '${i + 1}. ${clip.time} / ${clip.durationSeconds}초 / '
+          '평균 ${clip.avgDb.toStringAsFixed(1)}dB / '
+          '최대 ${clip.maxDb.toStringAsFixed(1)}dB / '
+          'AI확률 ${probability.toStringAsFixed(4)} / '
+          '판정 $judgmentText / '
+          'noise: $noiseText',
+        );
+
+        if (isSnoring) {
+          detected.add(
+            _ClassifiedSnoreClip(
+              index: i,
+              clip: clip,
+              probability: probability,
+            ),
+          );
+        }
+      } catch (e) {
+        lastError = e;
+        debugLines.add(
+          '${i + 1}. ${clip.time} / ${clip.durationSeconds}초 / AI 호출 실패: $e',
+        );
+      }
+    }
+
+    if (detected.isEmpty) {
+      snoreAiDebugText = 'AI 판별 결과\n'
+          '총 ${rawResult.audioClips.length}개 조각 분석 / 코골이 0개\n'
+          '기준 확률: ${aiSnoringProbabilityThreshold.toStringAsFixed(2)}\n\n'
+          '${debugLines.join('\n')}';
+
+      if (lastError != null) {
+        snoreError = '코골이 AI 판별 실패: $lastError';
+      } else {
+        snoreError = 'AI가 코골이로 판단한 10초 녹음이 없습니다. 아래 AI 판별 결과를 확인해보세요.';
+      }
+
+      await _deleteLocalClipFiles(rawResult.audioClips);
+
+      return _buildResultWithAiClips(
+        rawResult: rawResult,
+        aiDetectedClips: const [],
+        top5Clips: const [],
+      );
+    }
+
+    final top5 = detected.toList()
+      ..sort((a, b) {
+        final dbCompare = b.clip.maxDb.compareTo(a.clip.maxDb);
+        if (dbCompare != 0) return dbCompare;
+
+        return a.index.compareTo(b.index);
+      });
+
+    final selected = top5.take(5).toList()
+      ..sort((a, b) => a.index.compareTo(b.index));
+
+    final selectedClips = selected.map((item) => item.clip).toList();
+
+    snoreAiDebugText = 'AI 판별 결과\n'
+        '총 ${rawResult.audioClips.length}개 조각 분석 / '
+        '코골이 ${detected.length}개 / 화면 표시 TOP ${selected.length}개\n'
+        '기준 확률: ${aiSnoringProbabilityThreshold.toStringAsFixed(2)}\n\n'
+        '${debugLines.join('\n')}';
+
+    await _deleteUnselectedLocalClips(
+      allClips: rawResult.audioClips,
+      selectedClips: selectedClips,
+    );
+
+    for (final item in selected) {
+      try {
+        final file = File(item.clip.path);
+
+        if (!await file.exists()) {
+          continue;
+        }
+
+        await aiService.predict(
+          userId: userId!,
+          wavFile: file,
+          save: true,
+        );
+      } catch (e) {
+        lastError = e;
+      }
+    }
+
+    if (lastError != null) {
+      snoreError = '일부 코골이 AI 판별 또는 DB 저장 실패: $lastError';
+    } else {
+      snoreError = null;
+    }
+
+    return _buildResultWithAiClips(
+      rawResult: rawResult,
+      aiDetectedClips: detected.map((item) => item.clip).toList(),
+      top5Clips: selectedClips,
+    );
+  }
+
+  SnoreMeasureResult _buildResultWithAiClips({
+    required SnoreMeasureResult rawResult,
+    required List<SnoreAudioClip> aiDetectedClips,
+    required List<SnoreAudioClip> top5Clips,
+  }) {
+    if (aiDetectedClips.isEmpty) {
+      return SnoreMeasureResult(
+        avgSnoreDb: 0,
+        maxSnoreDb: 0,
+        snoreHours: 0,
+        snoreFreqHz: 0,
+        snoreCount: 0,
+        noiseDb: rawResult.noiseDb,
+        snoreTimeline: rawResult.snoreTimeline,
+        audioClips: top5Clips,
+      );
+    }
+
+    final avgDb = aiDetectedClips.fold<double>(
+          0,
+          (sum, clip) => sum + clip.avgDb,
+        ) /
+        aiDetectedClips.length;
+
+    final maxDb = aiDetectedClips.fold<double>(
+      0,
+      (maxValue, clip) {
+        if (clip.maxDb > maxValue) return clip.maxDb;
+        return maxValue;
+      },
+    );
+
+    final totalSeconds = aiDetectedClips.fold<int>(
+      0,
+      (sum, clip) => sum + clip.durationSeconds,
+    );
+
+    return SnoreMeasureResult(
+      avgSnoreDb: double.parse(avgDb.toStringAsFixed(1)),
+      maxSnoreDb: double.parse(maxDb.toStringAsFixed(1)),
+      snoreHours: double.parse((totalSeconds / 3600).toStringAsFixed(2)),
+      snoreFreqHz: rawResult.snoreFreqHz,
+      snoreCount: aiDetectedClips.length,
+      noiseDb: rawResult.noiseDb,
+      snoreTimeline: rawResult.snoreTimeline,
+      audioClips: top5Clips,
+    );
+  }
+
+  Future<void> _deleteUnselectedLocalClips({
+    required List<SnoreAudioClip> allClips,
+    required List<SnoreAudioClip> selectedClips,
+  }) async {
+    final selectedPaths = selectedClips.map((clip) => clip.path).toSet();
+
+    for (final clip in allClips) {
+      if (selectedPaths.contains(clip.path)) {
+        continue;
+      }
+
+      try {
+        final file = File(clip.path);
+
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _deleteLocalClipFiles(
+    List<SnoreAudioClip> clips,
+  ) async {
+    for (final clip in clips) {
+      try {
+        final file = File(clip.path);
+
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+    }
+  }
+
+  String _noiseLabelsText(dynamic noise) {
+    if (noise is! List || noise.isEmpty) {
+      return '-';
+    }
+
+    final labels = <String>[];
+
+    for (final item in noise) {
+      if (item is Map) {
+        final label = item['label']?.toString();
+        final probability = _toDouble(item['probability']);
+
+        if (label != null && label.isNotEmpty) {
+          labels.add('$label(${probability.toStringAsFixed(3)})');
+        }
+      }
+    }
+
+    if (labels.isEmpty) {
+      return '-';
+    }
+
+    return labels.join(', ');
+  }
+
+  Future<void> _notifySnoringIfNeeded(Map<String, dynamic> result) async {
+    final isSnoring = _isAiSnoringResult(result);
+
+    if (!isSnoring) {
+      return;
+    }
+
+    /*
+    //알림도 5초마다 울리게 할지 확인... 어뜩할까여 일단 지금은 뺌!
+    final now = DateTime.now();
+
+    final canNotify = _lastSnoreNotificationAt == null ||
+        now.difference(_lastSnoreNotificationAt!).inSeconds >= 30;
+
+    if (!canNotify) {
+      debugPrint('코골이 감지됨 but 30초 알림 쿨다운 중');
+      return;
+    }
+
+    _lastSnoreNotificationAt = now;
+    */
+    final probability = _toDouble(result['snoring_probability']);
+    final percentText = (probability * 100).toStringAsFixed(1);
+
+    try {
+      await SnoreNotificationService.showSnoreAlert(
+        title: '코골이 감지',
+        body: '코골이가 감지되었습니다. 자세를 바꿔보세요. 감지 확률 $percentText%',
+      );
+
+      debugPrint('코골이 감지 → 폰/워치 진동 알림 실행');
+    } catch (e) {
+      debugPrint('코골이 알림 실행 실패: $e');
+    }
+  }
+
+  bool _isAiSnoringResult(Map<String, dynamic> result) {
+    if (result['snoring_detected'] == true) {
+      return true;
+    }
+
+    if (result['snoring'] == true) {
+      return true;
+    }
+
+    final noise = result['noise'];
+
+    if (noise is List) {
+      for (final item in noise) {
+        if (item is Map) {
+          final label = item['label']?.toString().toLowerCase();
+
+          if (label == 'snoring') {
+            return true;
+          }
+        }
+      }
+    }
+
+    final probability = _toDouble(result['snoring_probability']);
+
+    return probability >= aiSnoringProbabilityThreshold;
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0;
+    return 0;
   }
 
   void _addSnoreOnlyRecord(SnoreMeasureResult snoreResult) {
@@ -407,21 +809,13 @@ class AppState extends ChangeNotifier {
       0,
       SleepRecord(
         date: DateTime.now(),
-
-        // Health Connect 수면 데이터가 없으므로 수면 점수는 0
         score: 0,
         bedtimeTarget: bedtimeTarget,
         wakeTarget: wakeTarget,
-
-        // 실제 마이크 측정 시작/종료 시각
         bedtimeActual: _formatTime(start),
         wakeActual: _formatTime(end),
-
-        // 수면 시간은 Health Connect 값이 아니므로 0으로 둠
         totalSleepHours: 0,
         targetSleepHours: _parseHours(bedtimeTarget, wakeTarget),
-
-        // 실제 폰 마이크 측정 결과
         avgSnoreDb: snoreResult.avgSnoreDb,
         maxSnoreDb: snoreResult.maxSnoreDb,
         snoreHours: snoreResult.snoreHours,
@@ -429,15 +823,12 @@ class AppState extends ChangeNotifier {
         snoreCount: snoreResult.snoreCount,
         noiseDb: snoreResult.noiseDb,
         snoreTimeline: timeline,
-
-        // 수면 단계는 Health Connect에서 받아오기 전까지 비워둠
+        snoreAudioClips: snoreResult.audioClips,
         stages: const [],
       ),
     );
   }
 
-  // Health Connect로 수면 기록을 먼저 가져온 뒤,
-  // 마이크 측정 결과만 현재 기록에 덮어씌움
   void updateTodaySnoreData(SnoreMeasureResult snoreResult) {
     if (_records.isEmpty) return;
 
@@ -452,8 +843,6 @@ class AppState extends ChangeNotifier {
       wakeActual: old.wakeActual,
       totalSleepHours: old.totalSleepHours,
       targetSleepHours: old.targetSleepHours,
-
-      // 실제 폰 마이크 측정값
       avgSnoreDb: snoreResult.avgSnoreDb,
       maxSnoreDb: snoreResult.maxSnoreDb,
       snoreHours: snoreResult.snoreHours,
@@ -463,8 +852,9 @@ class AppState extends ChangeNotifier {
       snoreTimeline: snoreResult.snoreTimeline.isEmpty
           ? old.snoreTimeline
           : snoreResult.snoreTimeline,
-
-      // 수면 단계는 Health Connect 값 유지
+      snoreAudioClips: snoreResult.audioClips.isEmpty
+          ? old.snoreAudioClips
+          : snoreResult.audioClips,
       stages: old.stages,
     );
 
@@ -565,6 +955,18 @@ class AppState extends ChangeNotifier {
   }
 }
 
+class _ClassifiedSnoreClip {
+  final int index;
+  final SnoreAudioClip clip;
+  final double probability;
+
+  const _ClassifiedSnoreClip({
+    required this.index,
+    required this.clip,
+    required this.probability,
+  });
+}
+
 // =========================
 // 빈 기록
 // =========================
@@ -589,6 +991,7 @@ SleepRecord _emptyRecord() {
     noiseDb: 0,
     stages: const [],
     snoreTimeline: const [],
+    snoreAudioClips: const [],
   );
 }
 
@@ -596,6 +999,4 @@ SleepRecord _emptyRecord() {
 // 월별 통계
 // =========================
 
-// 임시 월별 샘플 제거.
-// 월별 통계를 실제 값으로 만들려면 stats_tab.dart에서 state.records를 월별로 묶어 평균 내도록 수정해야 함.
 const List<MonthlyRecord> monthlyRecords = [];

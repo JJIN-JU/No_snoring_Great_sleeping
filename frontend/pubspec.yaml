@@ -17,7 +17,12 @@ dependencies:
   permission_handler: ^12.0.3
   kakao_flutter_sdk_user: ^1.9.7
   http: ^1.6.0
-  record: ^6.1.1
+  record: ^7.1.1
+  path_provider: ^2.1.6
+  audioplayers: ^6.8.1
+  web_socket_channel: ^3.0.1
+  flutter_local_notifications: ^18.0.1
+  vibration: ^3.2.0
   
 
 dev_dependencies:
@@ -31,6 +36,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/splash_logo.png
+    - assets/sleep.png
 
 flutter_native_splash:
   image: assets/splash_logo.png

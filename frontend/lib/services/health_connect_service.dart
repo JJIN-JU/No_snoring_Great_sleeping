@@ -26,8 +26,51 @@ class HealthSleepSummary {
   });
 }
 
+/// 하루치 산소포화도/호흡 관련 요약.
+/// 의료 진단이 아닌 참고용 데이터임에 유의.
+class ApneaRiskSummary {
+  final DateTime date;
+  final double? avgSpO2;
+  final double? minSpO2;
+  final int lowSpO2Events; // 기준치 미만으로 떨어진 측정 횟수
+  final double? avgRespiratoryRate;
+  final bool hasData;
+
+  const ApneaRiskSummary({
+    required this.date,
+    required this.avgSpO2,
+    required this.minSpO2,
+    required this.lowSpO2Events,
+    required this.avgRespiratoryRate,
+    required this.hasData,
+  });
+
+  factory ApneaRiskSummary.empty(DateTime date) {
+    return ApneaRiskSummary(
+      date: date,
+      avgSpO2: null,
+      minSpO2: null,
+      lowSpO2Events: 0,
+      avgRespiratoryRate: null,
+      hasData: false,
+    );
+  }
+
+  /// 참고용 위험도 표시. 의학적 진단이 아님.
+  String get riskLevel {
+    if (!hasData) return '데이터 없음';
+    if (lowSpO2Events == 0) return '낮음';
+    if (lowSpO2Events <= 3) return '주의';
+    return '높음';
+  }
+}
+
 class HealthConnectService {
   final Health _health = Health();
+
+  /// 화면에서 바로 확인할 수 있는 산소포화도 디버그 로그.
+  /// fetchApneaRiskHistory 호출할 때마다 새로 채워짐.
+  List<String> apneaDebugLog = [];
 
   final List<HealthDataType> _sleepTypes = const [
     HealthDataType.SLEEP_SESSION,
@@ -38,12 +81,31 @@ class HealthConnectService {
     HealthDataType.SLEEP_AWAKE,
   ];
 
+  final List<HealthDataType> _apneaTypes = const [
+    HealthDataType.BLOOD_OXYGEN,
+    HealthDataType.RESPIRATORY_RATE,
+  ];
+
+  /// 낮은 산소포화도로 간주하는 기준값 (참고용, 임상 기준 아님).
+  static const double lowSpO2Threshold = 90.0;
+
   Future<bool> requestSleepPermission() async {
     await _health.configure();
 
     final granted = await _health.requestAuthorization(
       _sleepTypes,
       permissions: _sleepTypes.map((type) => HealthDataAccess.READ).toList(),
+    );
+
+    return granted;
+  }
+
+  Future<bool> requestApneaPermission() async {
+    await _health.configure();
+
+    final granted = await _health.requestAuthorization(
+      _apneaTypes,
+      permissions: _apneaTypes.map((type) => HealthDataAccess.READ).toList(),
     );
 
     return granted;
@@ -139,6 +201,138 @@ class HealthConnectService {
           ),
         )
         .toList();
+  }
+
+  /// 최근 [nights]일치 산소포화도/호흡수 데이터를,
+  /// [fetchSleepHistory]가 찾은 수면 창(window)에 맞춰 요약해서 반환한다.
+  /// 수면 기록 자체를 먼저 찾고, 그 시간대에 겹치는 SpO2/호흡수만 집계하는 방식.
+  Future<List<ApneaRiskSummary>> fetchApneaRiskHistory({int nights = 7}) async {
+    await _health.configure();
+
+    final log = <String>[];
+    void addLog(String line) {
+      log.add(line);
+      // ignore: avoid_print
+      print('[APNEA_DEBUG] $line');
+    }
+
+    // 먼저 수면 창을 알아야 그 구간의 SpO2를 집계할 수 있다.
+    List<HealthSleepSummary> sleepSummaries;
+
+    try {
+      sleepSummaries = await fetchSleepHistory(nights: nights);
+    } catch (e) {
+      // 수면 기록 자체가 없으면 산소포화도도 의미 있게 묶을 수 없음
+      addLog('fetchSleepHistory 실패: $e');
+      apneaDebugLog = log;
+      return [];
+    }
+
+    final granted = await requestApneaPermission();
+
+    addLog('requestApneaPermission granted=$granted');
+
+    if (!granted) {
+      apneaDebugLog = log;
+      return sleepSummaries.map((s) => ApneaRiskSummary.empty(s.date)).toList();
+    }
+
+    final now = DateTime.now();
+    final start = now.subtract(Duration(days: nights + 7));
+    final end = now.add(const Duration(minutes: 1));
+
+    var points = await _health.getHealthDataFromTypes(
+      types: _apneaTypes,
+      startTime: start,
+      endTime: end,
+    );
+
+    addLog('raw points fetched=${points.length} (range $start ~ $end)');
+
+    points = _health.removeDuplicates(points);
+
+    addLog('after removeDuplicates=${points.length}');
+
+    for (final p in points) {
+      addLog(
+          '  point type=${p.type} from=${p.dateFrom} to=${p.dateTo} value=${p.value}');
+    }
+
+    for (final sleep in sleepSummaries) {
+      addLog(
+          'sleep date=${sleep.date} bedtime=${sleep.bedtime} wakeTime=${sleep.wakeTime}');
+    }
+
+    final result = sleepSummaries.map((sleep) {
+      if (sleep.bedtime == null || sleep.wakeTime == null) {
+        addLog('skip ${sleep.date}: bedtime/wakeTime null');
+        return ApneaRiskSummary.empty(sleep.date);
+      }
+
+      final relatedPoints = points.where((p) {
+        return _overlaps(p.dateFrom, p.dateTo, sleep.bedtime!, sleep.wakeTime!);
+      }).toList();
+
+      addLog(
+          'date=${sleep.date} window=${sleep.bedtime}~${sleep.wakeTime} matched=${relatedPoints.length}');
+
+      return _summarizeApnea(sleep.date, relatedPoints);
+    }).toList();
+
+    apneaDebugLog = log;
+    return result;
+  }
+
+  ApneaRiskSummary _summarizeApnea(
+    DateTime date,
+    List<HealthDataPoint> points,
+  ) {
+    final spo2Values = <double>[];
+    final respRateValues = <double>[];
+
+    for (final point in points) {
+      final value = point.value;
+
+      if (value is! NumericHealthValue) continue;
+
+      final numeric = value.numericValue.toDouble();
+
+      if (point.type == HealthDataType.BLOOD_OXYGEN) {
+        spo2Values.add(numeric);
+      } else if (point.type == HealthDataType.RESPIRATORY_RATE) {
+        respRateValues.add(numeric);
+      }
+    }
+
+    if (spo2Values.isEmpty && respRateValues.isEmpty) {
+      return ApneaRiskSummary.empty(date);
+    }
+
+    double? avgSpO2;
+    double? minSpO2;
+    var lowSpO2Events = 0;
+
+    if (spo2Values.isNotEmpty) {
+      avgSpO2 = spo2Values.reduce((a, b) => a + b) / spo2Values.length;
+      minSpO2 = spo2Values.reduce((a, b) => a < b ? a : b);
+      lowSpO2Events = spo2Values.where((v) => v < lowSpO2Threshold).length;
+    }
+
+    double? avgRespRate;
+
+    if (respRateValues.isNotEmpty) {
+      avgRespRate =
+          respRateValues.reduce((a, b) => a + b) / respRateValues.length;
+    }
+
+    return ApneaRiskSummary(
+      date: date,
+      avgSpO2: avgSpO2,
+      minSpO2: minSpO2,
+      lowSpO2Events: lowSpO2Events,
+      avgRespiratoryRate: avgRespRate,
+      hasData: true,
+    );
   }
 
   HealthSleepSummary _summarizeWindow(
