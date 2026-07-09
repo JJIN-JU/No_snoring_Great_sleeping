@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../services/snore_notification_service.dart';
 import '../models/sleep_data.dart';
 import '../services/auth_api_service.dart';
 import '../services/health_connect_service.dart';
@@ -12,9 +13,7 @@ import '../services/snore_measure_service.dart';
 import '../theme.dart';
 
 class AppState extends ChangeNotifier {
-  // AI 판별 결과를 화면/DB에 반영할 최소 확률.
-  // 모델이 snoring=false를 반환해도 확률이 이 값 이상이면 코골이 후보로 인정.
-  static const double aiSnoringProbabilityThreshold = 0.50;
+  static const double aiSnoringProbabilityThreshold = 0.005;
 
   // =========================
   // 로그인 상태
@@ -26,7 +25,6 @@ class AppState extends ChangeNotifier {
   bool loginLoading = false;
   String? loginError;
 
-  // MongoDB users 컬렉션의 _id
   String? userId;
 
   String? kakaoId;
@@ -56,9 +54,9 @@ class AppState extends ChangeNotifier {
   final SnoreMeasureService _snoreMeasureService = SnoreMeasureService();
 
   String? snoreError;
-
-  // AI 모델이 각 10초 녹음을 어떻게 판단했는지 화면에 보여주는 디버그 문구
   String? snoreAiDebugText;
+
+  DateTime? _lastSnoreNotificationAt;
 
   bool get snoreRecording => _snoreMeasureService.isRunning;
 
@@ -74,8 +72,6 @@ class AppState extends ChangeNotifier {
   String? apneaError;
   List<ApneaRiskSummary> apneaHistory = [];
 
-  // 샘플 데이터 없음
-  // Health Connect 수면 데이터 또는 폰 마이크 측정 데이터가 들어올 때만 records에 추가됨
   final List<SleepRecord> _records = [];
 
   List<SleepRecord> get records => _records;
@@ -113,12 +109,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 1. 카카오 로그인
       final kakaoResult = await KakaoAuthService().login();
 
-      // 2. 카카오 사용자 정보를 FastAPI 서버로 전송
-      // 3. FastAPI가 MongoDB users 컬렉션에 저장 또는 업데이트
-      // 4. 저장된 user_id 반환
       final savedUser = await AuthApiService().saveKakaoUser(kakaoResult);
 
       loggedIn = true;
@@ -127,9 +119,6 @@ class AppState extends ChangeNotifier {
       kakaoId = savedUser.kakaoId;
       kakaoEmail = savedUser.email;
       profileImageUrl = savedUser.profileImageUrl;
-
-      // 토큰은 앱 내부 로그인 상태 확인용으로만 보관
-      // DB에는 저장하지 않음
       kakaoAccessToken = kakaoResult.accessToken;
 
       userName = savedUser.nickname?.isNotEmpty == true
@@ -150,6 +139,7 @@ class AppState extends ChangeNotifier {
       loginLoading = false;
       notifyListeners();
     }
+
     if (loggedIn) {
       await refreshAllHealthData();
     }
@@ -158,9 +148,7 @@ class AppState extends ChangeNotifier {
   Future<void> logout() async {
     try {
       await KakaoAuthService().logout();
-    } catch (_) {
-      // 카카오 로그아웃 실패해도 앱 내부에서는 로그아웃 처리
-    }
+    } catch (_) {}
 
     _clearLoginState();
     notifyListeners();
@@ -180,13 +168,9 @@ class AppState extends ChangeNotifier {
         throw Exception('카카오 사용자 ID가 없어 DB 삭제를 진행할 수 없습니다.');
       }
 
-      // 1. FastAPI 서버에 DB 사용자 삭제 요청
       await AuthApiService().deleteKakaoUser(currentKakaoId);
-
-      // 2. 카카오 연결 해제
       await KakaoAuthService().unlink();
 
-      // 3. 앱 내부 로그인 상태 초기화
       _clearLoginState();
     } catch (e) {
       loginError = e.toString();
@@ -256,8 +240,6 @@ class AppState extends ChangeNotifier {
         noiseDb: old.noiseDb,
         stages: old.stages,
         snoreTimeline: old.snoreTimeline,
-
-        // 목표 시간 변경 시 기존 녹음 클립 유지
         snoreAudioClips: old.snoreAudioClips,
       );
     }
@@ -282,8 +264,6 @@ class AppState extends ChangeNotifier {
 
       final targetHours = _parseHours(bedtimeTarget, wakeTarget);
 
-      // 같은 날짜의 기존 레코드가 있다면(폰 마이크로 측정한 코골이 값 등)
-      // 코골이 관련 필드는 최대한 유지한다.
       final oldByDate = <String, SleepRecord>{
         for (final r in _records) _dateKey(r.date): r,
       };
@@ -328,8 +308,6 @@ class AppState extends ChangeNotifier {
           wakeActual: wakeActual,
           totalSleepHours: totalSleepHours,
           targetSleepHours: targetHours,
-
-          // 코골이/소음 값은 Health Connect가 아니라 폰 마이크 측정값 유지
           avgSnoreDb: old?.avgSnoreDb ?? 0,
           maxSnoreDb: old?.maxSnoreDb ?? 0,
           snoreHours: old?.snoreHours ?? 0,
@@ -337,15 +315,11 @@ class AppState extends ChangeNotifier {
           snoreCount: old?.snoreCount ?? 0,
           noiseDb: old?.noiseDb ?? 0,
           snoreTimeline: old?.snoreTimeline ?? const [],
-
-          // Health Connect 동기화 후에도 기존 녹음 클립 유지
           snoreAudioClips: old?.snoreAudioClips ?? const [],
-
           stages: stages,
         );
       }).toList();
 
-      // history는 이미 최신 -> 과거 순으로 정렬돼 있으므로 그대로 교체한다.
       _records
         ..clear()
         ..addAll(newRecords);
@@ -359,10 +333,6 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     }
   }
-
-  // =========================
-  // Health Connect 산소포화도/호흡 데이터 불러오기
-  // =========================
 
   Future<void> loadApneaRiskHistory({int nights = 7}) async {
     if (apneaLoading) return;
@@ -383,8 +353,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// 수면 데이터와 무호흡 위험(SpO2/호흡수) 데이터를 함께 갱신한다.
-  /// 수면 탭의 "Health Connect 불러오기" 버튼에서 이 함수를 호출하면 된다.
   Future<void> refreshAllHealthData({int nights = 7}) async {
     await loadHealthConnectSleep(nights: nights);
     await loadApneaRiskHistory(nights: nights);
@@ -400,8 +368,11 @@ class AppState extends ChangeNotifier {
     try {
       snoreError = null;
       snoreAiDebugText = null;
+      _lastSnoreNotificationAt = null;
 
-      await _snoreMeasureService.start();
+      await _snoreMeasureService.start(
+        onClipReady: _classifyClipAndNotifyDuringMeasurement,
+      );
 
       measuring = true;
       measuredElapsed = Duration.zero;
@@ -435,17 +406,11 @@ class AppState extends ChangeNotifier {
     measuring = false;
     measuredElapsed = Duration.zero;
 
-    // 핵심:
-    // 10초 녹음 조각을 AI 모델로 판별하고,
-    // snoring=true인 것 중 max dB 높은 TOP 5만 화면/DB에 남긴다.
-    // TOP 5는 다시 과거순으로 정렬해서 보여준다.
     final snoreResult = await _classifyTop5SnoreClips(rawSnoreResult);
 
     if (_records.isNotEmpty) {
-      // Health Connect 수면 기록이 있으면 그 기록에 코골이 측정값만 덮어씀
       updateTodaySnoreData(snoreResult);
     } else {
-      // Health Connect 수면 기록이 아직 없으면 코골이 측정값만 들어간 기록 생성
       _addSnoreOnlyRecord(snoreResult);
     }
 
@@ -453,6 +418,47 @@ class AppState extends ChangeNotifier {
     _measureStartedAt = null;
 
     notifyListeners();
+  }
+
+  Future<void> _classifyClipAndNotifyDuringMeasurement(
+    SnoreAudioClip clip,
+  ) async {
+    if (!measuring) return;
+
+    if (userId == null || userId!.isEmpty) {
+      debugPrint('실시간 코골이 AI 판별 생략: userId 없음');
+      return;
+    }
+
+    try {
+      final file = File(clip.path);
+
+      if (!await file.exists()) {
+        debugPrint('실시간 코골이 AI 판별 생략: 파일 없음 ${clip.path}');
+        return;
+      }
+
+      final result = await AIService().predict(
+        userId: userId!,
+        wavFile: file,
+        save: false,
+      );
+
+      final probability = _toDouble(result['snoring_probability']);
+      final isSnoring = _isAiSnoringResult(result);
+
+      debugPrint(
+        '실시간 5초 조각 AI 판별: ${clip.time} / '
+        '확률 ${probability.toStringAsFixed(4)} / '
+        '${isSnoring ? '코골이 O' : '코골이 X'}',
+      );
+
+      if (isSnoring) {
+        await _notifySnoringIfNeeded(result);
+      }
+    } catch (e) {
+      debugPrint('실시간 코골이 AI 판별 실패: $e');
+    }
   }
 
   Future<SnoreMeasureResult> _classifyTop5SnoreClips(
@@ -466,7 +472,9 @@ class AppState extends ChangeNotifier {
     if (userId == null || userId!.isEmpty) {
       snoreError = '코골이 AI 판별을 하려면 카카오 로그인이 필요합니다.';
       snoreAiDebugText = 'AI 판별 불가: userId가 없습니다. 카카오 로그인과 DB 사용자 저장을 먼저 확인하세요.';
+
       await _deleteLocalClipFiles(rawResult.audioClips);
+
       return _buildResultWithAiClips(
         rawResult: rawResult,
         aiDetectedClips: const [],
@@ -480,7 +488,6 @@ class AppState extends ChangeNotifier {
 
     Object? lastError;
 
-    // 1. 모든 10초 조각을 AI로 판별만 한다. save=false라서 DB 저장 안 됨.
     for (var i = 0; i < rawResult.audioClips.length; i++) {
       final clip = rawResult.audioClips[i];
 
@@ -549,18 +556,15 @@ class AppState extends ChangeNotifier {
       );
     }
 
-    // 2. AI가 코골이라고 본 것 중에서 max dB 높은 TOP 5를 고른다.
     final top5 = detected.toList()
       ..sort((a, b) {
         final dbCompare = b.clip.maxDb.compareTo(a.clip.maxDb);
         if (dbCompare != 0) return dbCompare;
 
-        // dB가 같으면 더 과거 조각 우선
         return a.index.compareTo(b.index);
       });
 
     final selected = top5.take(5).toList()
-      // 3. 화면에는 과거순으로 보여준다.
       ..sort((a, b) => a.index.compareTo(b.index));
 
     final selectedClips = selected.map((item) => item.clip).toList();
@@ -571,13 +575,11 @@ class AppState extends ChangeNotifier {
         '기준 확률: ${aiSnoringProbabilityThreshold.toStringAsFixed(2)}\n\n'
         '${debugLines.join('\n')}';
 
-    // 4. 선택되지 않은 로컬 10초 파일은 삭제한다.
     await _deleteUnselectedLocalClips(
       allClips: rawResult.audioClips,
       selectedClips: selectedClips,
     );
 
-    // 5. TOP 5만 save=true로 다시 보내서 DB에 저장한다.
     for (final item in selected) {
       try {
         final file = File(item.clip.path);
@@ -651,11 +653,9 @@ class AppState extends ChangeNotifier {
       maxSnoreDb: double.parse(maxDb.toStringAsFixed(1)),
       snoreHours: double.parse((totalSeconds / 3600).toStringAsFixed(2)),
       snoreFreqHz: rawResult.snoreFreqHz,
-      // AI가 코골이로 감지한 10초 조각 수
       snoreCount: aiDetectedClips.length,
       noiseDb: rawResult.noiseDb,
       snoreTimeline: rawResult.snoreTimeline,
-      // 화면에는 TOP 5만 표시
       audioClips: top5Clips,
     );
   }
@@ -677,9 +677,7 @@ class AppState extends ChangeNotifier {
         if (await file.exists()) {
           await file.delete();
         }
-      } catch (_) {
-        // 삭제 실패해도 앱 흐름에는 영향 없게 무시
-      }
+      } catch (_) {}
     }
   }
 
@@ -693,9 +691,7 @@ class AppState extends ChangeNotifier {
         if (await file.exists()) {
           await file.delete();
         }
-      } catch (_) {
-        // 삭제 실패해도 앱 흐름에는 영향 없게 무시
-      }
+      } catch (_) {}
     }
   }
 
@@ -724,13 +720,51 @@ class AppState extends ChangeNotifier {
     return labels.join(', ');
   }
 
+  Future<void> _notifySnoringIfNeeded(Map<String, dynamic> result) async {
+    final isSnoring = _isAiSnoringResult(result);
+
+    if (!isSnoring) {
+      return;
+    }
+
+    /*
+    //알림도 5초마다 울리게 할지 확인... 어뜩할까여 일단 지금은 뺌!
+    final now = DateTime.now();
+
+    final canNotify = _lastSnoreNotificationAt == null ||
+        now.difference(_lastSnoreNotificationAt!).inSeconds >= 30;
+
+    if (!canNotify) {
+      debugPrint('코골이 감지됨 but 30초 알림 쿨다운 중');
+      return;
+    }
+
+    _lastSnoreNotificationAt = now;
+    */
+    final probability = _toDouble(result['snoring_probability']);
+    final percentText = (probability * 100).toStringAsFixed(1);
+
+    try {
+      await SnoreNotificationService.showSnoreAlert(
+        title: '코골이 감지',
+        body: '코골이가 감지되었습니다. 자세를 바꿔보세요. 감지 확률 $percentText%',
+      );
+
+      debugPrint('코골이 감지 → 폰/워치 진동 알림 실행');
+    } catch (e) {
+      debugPrint('코골이 알림 실행 실패: $e');
+    }
+  }
+
   bool _isAiSnoringResult(Map<String, dynamic> result) {
-    // 1. binary 모델 결과가 true면 코골이
+    if (result['snoring_detected'] == true) {
+      return true;
+    }
+
     if (result['snoring'] == true) {
       return true;
     }
 
-    // 2. multi-label 모델의 noise 목록에 Snoring이 있으면 코골이
     final noise = result['noise'];
 
     if (noise is List) {
@@ -745,7 +779,6 @@ class AppState extends ChangeNotifier {
       }
     }
 
-    // 3. binary 확률값이 기준 이상이면 코골이 후보로 인정
     final probability = _toDouble(result['snoring_probability']);
 
     return probability >= aiSnoringProbabilityThreshold;
@@ -770,21 +803,13 @@ class AppState extends ChangeNotifier {
       0,
       SleepRecord(
         date: DateTime.now(),
-
-        // Health Connect 수면 데이터가 없으므로 수면 점수는 0
         score: 0,
         bedtimeTarget: bedtimeTarget,
         wakeTarget: wakeTarget,
-
-        // 실제 마이크 측정 시작/종료 시각
         bedtimeActual: _formatTime(start),
         wakeActual: _formatTime(end),
-
-        // 수면 시간은 Health Connect 값이 아니므로 0으로 둠
         totalSleepHours: 0,
         targetSleepHours: _parseHours(bedtimeTarget, wakeTarget),
-
-        // 실제 폰 마이크 측정 결과. AI 판별 후 재계산된 값이 들어옴.
         avgSnoreDb: snoreResult.avgSnoreDb,
         maxSnoreDb: snoreResult.maxSnoreDb,
         snoreHours: snoreResult.snoreHours,
@@ -792,18 +817,12 @@ class AppState extends ChangeNotifier {
         snoreCount: snoreResult.snoreCount,
         noiseDb: snoreResult.noiseDb,
         snoreTimeline: timeline,
-
-        // AI가 코골이로 판별한 10초 조각 중 max dB TOP 5만 저장
         snoreAudioClips: snoreResult.audioClips,
-
-        // 수면 단계는 Health Connect에서 받아오기 전까지 비워둠
         stages: const [],
       ),
     );
   }
 
-  // Health Connect로 수면 기록을 먼저 가져온 뒤,
-  // 마이크 측정 결과만 현재 기록에 덮어씌움
   void updateTodaySnoreData(SnoreMeasureResult snoreResult) {
     if (_records.isEmpty) return;
 
@@ -818,8 +837,6 @@ class AppState extends ChangeNotifier {
       wakeActual: old.wakeActual,
       totalSleepHours: old.totalSleepHours,
       targetSleepHours: old.targetSleepHours,
-
-      // 실제 폰 마이크 측정값. AI 판별 후 재계산된 값이 들어옴.
       avgSnoreDb: snoreResult.avgSnoreDb,
       maxSnoreDb: snoreResult.maxSnoreDb,
       snoreHours: snoreResult.snoreHours,
@@ -829,13 +846,9 @@ class AppState extends ChangeNotifier {
       snoreTimeline: snoreResult.snoreTimeline.isEmpty
           ? old.snoreTimeline
           : snoreResult.snoreTimeline,
-
-      // 새 녹음이 있으면 AI 판별 TOP 5 사용, 없으면 기존 클립 유지
       snoreAudioClips: snoreResult.audioClips.isEmpty
           ? old.snoreAudioClips
           : snoreResult.audioClips,
-
-      // 수면 단계는 Health Connect 값 유지
       stages: old.stages,
     );
 
@@ -972,8 +985,6 @@ SleepRecord _emptyRecord() {
     noiseDb: 0,
     stages: const [],
     snoreTimeline: const [],
-
-    // 빈 기록에서는 녹음 클립 없음
     snoreAudioClips: const [],
   );
 }
@@ -982,6 +993,4 @@ SleepRecord _emptyRecord() {
 // 월별 통계
 // =========================
 
-// 임시 월별 샘플 제거.
-// 월별 통계를 실제 값으로 만들려면 stats_tab.dart에서 state.records를 월별로 묶어 평균 내도록 수정해야 함.
 const List<MonthlyRecord> monthlyRecords = [];
