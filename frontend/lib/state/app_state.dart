@@ -72,9 +72,6 @@ class AppState extends ChangeNotifier {
   String? apneaError;
   List<ApneaRiskSummary> apneaHistory = [];
 
-  // 화면에서 바로 확인하는 산소포화도 디버그 로그 (컴퓨터 없이 폰에서 확인용)
-  String? apneaDebugText;
-
   // 샘플 데이터 없음
   // Health Connect 수면 데이터 또는 폰 마이크 측정 데이터가 들어올 때만 records에 추가됨
   final List<SleepRecord> _records = [];
@@ -349,7 +346,6 @@ class AppState extends ChangeNotifier {
     try {
       final service = HealthConnectService();
       apneaHistory = await service.fetchApneaRiskHistory(nights: nights);
-      apneaDebugText = service.apneaDebugLog.join('\n');
     } catch (e) {
       apneaError = e.toString();
       apneaHistory = [];
@@ -477,7 +473,8 @@ class AppState extends ChangeNotifier {
 
     if (userId == null || userId!.isEmpty) {
       snoreError = '코골이 AI 판별을 하려면 카카오 로그인이 필요합니다.';
-      snoreAiDebugText = 'AI 판별 불가: userId가 없습니다. 카카오 로그인과 DB 사용자 저장을 먼저 확인하세요.';
+      snoreAiDebugText =
+          'AI 판별 불가: userId가 없습니다. 카카오 로그인과 DB 사용자 저장을 먼저 확인하세요.';
 
       await _deleteLocalClipFiles(rawResult.audioClips);
 
