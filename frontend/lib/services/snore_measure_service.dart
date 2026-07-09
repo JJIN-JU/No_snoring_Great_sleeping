@@ -7,6 +7,8 @@ import 'package:record/record.dart';
 
 import '../models/sleep_data.dart';
 
+typedef SnoreClipReadyCallback = Future<void> Function(SnoreAudioClip clip);
+
 class SnoreMeasureResult {
   final double avgSnoreDb;
   final double maxSnoreDb;
@@ -83,21 +85,25 @@ class SnoreMeasureService {
   bool _rotating = false;
   bool _inSnoreSection = false;
 
+  SnoreClipReadyCallback? _onClipReady;
+
   /// record 패키지의 amplitude는 실제 생활소음 dB가 아니라 dBFS에 가까움.
   /// 앱 표시용으로 0~100 범위로 보정해서 사용.
   /// 이 값은 그래프/통계 참고용이고, 최종 코골이 판별은 AI 모델이 한다.
   static const double snoreThresholdDb = 45.0;
   static const double snoreEndThresholdDb = 42.0;
 
-  /// AI 판별용으로 10초 단위 녹음 파일을 만든다.
-  static const Duration segmentDuration = Duration(seconds: 10);
+  /// AI 판별용으로 5초 단위 녹음 파일을 만든다.
+  static const Duration segmentDuration = Duration(seconds: 5);
 
   /// 그래프 점 저장 간격.
   static const Duration timelineInterval = Duration(seconds: 30);
 
   bool get isRunning => _running;
 
-  Future<void> start() async {
+  Future<void> start({
+    SnoreClipReadyCallback? onClipReady,
+  }) async {
     if (_running) return;
 
     try {
@@ -108,6 +114,7 @@ class SnoreMeasureService {
       }
 
       _reset();
+      _onClipReady = onClipReady;
 
       await _startNewSegment();
 
@@ -128,6 +135,7 @@ class SnoreMeasureService {
     } catch (e) {
       _running = false;
       _rotating = false;
+      _onClipReady = null;
 
       await _safeCancelRecorder();
 
@@ -159,6 +167,8 @@ class SnoreMeasureService {
       await _finishCurrentSegment();
     }
 
+    _onClipReady = null;
+
     return _buildResult();
   }
 
@@ -172,6 +182,8 @@ class SnoreMeasureService {
     _amplitudeSubscription = null;
 
     await _safeCancelRecorder();
+
+    _onClipReady = null;
 
     _reset();
   }
@@ -276,6 +288,8 @@ class SnoreMeasureService {
   Future<void> _finishCurrentSegment() async {
     String? path;
 
+    final wasRunning = _running;
+
     try {
       final isRecording = await _recorder.isRecording();
 
@@ -315,15 +329,30 @@ class SnoreMeasureService {
     // 핵심:
     // 여기서는 dB로 코골이를 확정하지 않고 모든 10초 조각을 보관한다.
     // AppState에서 AI 모델로 snoring=true/false 판별 후 top 5만 남긴다.
-    _audioClips.add(
-      SnoreAudioClip(
-        path: path,
-        time: _formatTime(startedAt),
-        avgDb: double.parse(avgDb.toStringAsFixed(1)),
-        maxDb: double.parse(_segmentMaxDb.toStringAsFixed(1)),
-        durationSeconds: durationSeconds,
-      ),
+    final clip = SnoreAudioClip(
+      path: path,
+      time: _formatTime(startedAt),
+      avgDb: double.parse(avgDb.toStringAsFixed(1)),
+      maxDb: double.parse(_segmentMaxDb.toStringAsFixed(1)),
+      durationSeconds: durationSeconds,
     );
+
+    _audioClips.add(clip);
+
+    // 측정 중 10초 조각이 완성되면 즉시 AppState로 전달.
+    // stop()으로 마지막 조각을 마감할 때는 wasRunning=false라서 여기서 알림을 울리지 않음.
+    final callback = _onClipReady;
+    if (wasRunning && callback != null) {
+      Future.microtask(() async {
+        try {
+          await callback(clip);
+        } catch (e) {
+          // callback 실패해도 녹음 흐름은 유지
+          // ignore: avoid_print
+          print('10초 코골이 조각 AI 판별 실패: $e');
+        }
+      });
+    }
 
     _clearSegment();
   }

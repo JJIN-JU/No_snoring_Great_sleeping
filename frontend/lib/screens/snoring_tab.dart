@@ -209,133 +209,58 @@ class SnoringTab extends StatelessWidget {
 
               const SizedBox(height: 24),
 
-              Center(
-                child: SizedBox(
-                  width: 250,
-                  height: 250,
-                  child: CustomPaint(
-                    painter: _SleepClockPainter(
-                      measuring: isMeasuring,
-                    ),
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        const Positioned(
-                          top: 35,
-                          child: Text(
-                            '12 AM',
-                            style: TextStyle(
-                              color: AppColors.foreground,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        const Positioned(
-                          right: 31,
-                          child: Text(
-                            '6 AM',
-                            style: TextStyle(
-                              color: AppColors.foreground,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        const Positioned(
-                          bottom: 35,
-                          child: Text(
-                            '12 PM',
-                            style: TextStyle(
-                              color: AppColors.foreground,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        const Positioned(
-                          left: 31,
-                          child: Text(
-                            '6 PM',
-                            style: TextStyle(
-                              color: AppColors.foreground,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          top: 31,
-                          right: 48,
-                          child: CircleAvatar(
-                            radius: 20,
-                            backgroundColor:
-                                isMeasuring ? AppColors.pink : AppColors.primary,
-                            child: Icon(
-                              isMeasuring
-                                  ? Icons.mic_rounded
-                                  : Icons.nights_stay_rounded,
-                              color: Colors.white,
-                              size: 22,
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          bottom: 40,
-                          right: 30,
-                          child: CircleAvatar(
-                            radius: 19,
-                            backgroundColor: AppColors.gold,
-                            child: const Icon(
-                              Icons.notifications_rounded,
-                              color: Colors.white,
-                              size: 21,
-                            ),
-                          ),
-                        ),
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              isMeasuring
-                                  ? Icons.graphic_eq_rounded
-                                  : Icons.hotel_rounded,
-                              color: isMeasuring
-                                  ? AppColors.pink
-                                  : AppColors.primary,
-                              size: 36,
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              isMeasuring ? '측정 중' : '취침 준비',
-                              style: const TextStyle(
-                                color: AppColors.foreground,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              isMeasuring
-                                  ? _formatElapsed(state.measuredElapsed)
-                                  : '버튼을 누르면 시작됩니다',
-                              style: TextStyle(
-                                color: isMeasuring
-                                    ? AppColors.pink
-                                    : AppColors.muted,
-                                fontSize: isMeasuring ? 24 : 13,
-                                fontWeight: isMeasuring
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+              if (!isMeasuring)
+                // 측정 시작 전: 안내 이미지
+                Center(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: Image.asset(
+                      'assets/sleep.png',
+                      fit: BoxFit.contain,
                     ),
                   ),
+                )
+              else
+                // 측정 중: 간단한 타이머 표시
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.pink.withValues(alpha: 0.15),
+                          border: Border.all(color: AppColors.pink, width: 3),
+                        ),
+                        child: const Icon(
+                          Icons.mic_rounded,
+                          color: AppColors.pink,
+                          size: 48,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        '측정 중',
+                        style: TextStyle(
+                          color: AppColors.foreground,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _formatElapsed(state.measuredElapsed),
+                        style: const TextStyle(
+                          color: AppColors.pink,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
 
               const SizedBox(height: 24),
 
@@ -980,96 +905,3 @@ class _TimeRow extends StatelessWidget {
   }
 }
 
-class _SleepClockPainter extends CustomPainter {
-  final bool measuring;
-
-  const _SleepClockPainter({
-    required this.measuring,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = size.center(Offset.zero);
-    final radius = math.min(size.width, size.height) / 2 - 18;
-
-    final basePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 34
-      ..strokeCap = StrokeCap.round
-      ..color = AppColors.border.withValues(alpha: 0.55);
-
-    canvas.drawCircle(center, radius, basePaint);
-
-    final progressPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 34
-      ..strokeCap = StrokeCap.round
-      ..shader = SweepGradient(
-        startAngle: -math.pi / 2,
-        endAngle: math.pi * 1.5,
-        colors: [
-          AppColors.primary,
-          AppColors.pink,
-          AppColors.gold,
-          AppColors.primary,
-        ],
-      ).createShader(
-        Rect.fromCircle(
-          center: center,
-          radius: radius,
-        ),
-      );
-
-    canvas.drawArc(
-      Rect.fromCircle(
-        center: center,
-        radius: radius,
-      ),
-      -math.pi / 3,
-      measuring ? math.pi * 1.55 : math.pi * 0.75,
-      false,
-      progressPaint,
-    );
-
-    final tickPaint = Paint()
-      ..strokeWidth = 1
-      ..strokeCap = StrokeCap.round
-      ..color = AppColors.muted.withValues(alpha: 0.6);
-
-    final longTickPaint = Paint()
-      ..strokeWidth = 2
-      ..strokeCap = StrokeCap.round
-      ..color = AppColors.foreground.withValues(alpha: 0.85);
-
-    final innerRadius = radius - 54;
-    final outerRadius = radius - 39;
-
-    for (var i = 0; i < 96; i++) {
-      final angle = -math.pi / 2 + (math.pi * 2 * i / 96);
-      final isLong = i % 24 == 0;
-
-      final startRadius = isLong ? innerRadius - 8 : innerRadius;
-
-      final start = Offset(
-        center.dx + math.cos(angle) * startRadius,
-        center.dy + math.sin(angle) * startRadius,
-      );
-
-      final end = Offset(
-        center.dx + math.cos(angle) * outerRadius,
-        center.dy + math.sin(angle) * outerRadius,
-      );
-
-      canvas.drawLine(
-        start,
-        end,
-        isLong ? longTickPaint : tickPaint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _SleepClockPainter oldDelegate) {
-    return oldDelegate.measuring != measuring;
-  }
-}

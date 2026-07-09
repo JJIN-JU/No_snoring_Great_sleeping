@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 
 class AIService {
   static const String baseUrl =
-      "https://attitude-contamination-partially-coal.trycloudflare.com";
+      "https://lets-literally-communicate-say.trycloudflare.com";
 
   Future<Map<String, dynamic>> predict({
     required String userId,

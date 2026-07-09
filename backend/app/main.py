@@ -1,5 +1,7 @@
 import os
 import tempfile
+import time
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -11,6 +13,8 @@ from fastapi import (
     UploadFile,
     File,
     Form,
+    WebSocket,
+    WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -22,6 +26,7 @@ from app.database import (
     daily_stats,
 )
 from app.model_service import predict
+from app.realtime_manager import realtime_manager
 
 
 app = FastAPI(
@@ -37,6 +42,47 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# =========================
+# 실시간/폴링 코골이 알림 설정
+# =========================
+
+last_snore_alert_time = 0
+SNORE_ALERT_COOLDOWN_SECONDS = 30
+
+latest_snore_alert_id = 0
+latest_snore_alert = None
+
+
+def create_latest_snore_alert(
+    title: str = "코골이 감지",
+    message: str = "코골이가 감지되었습니다. 자세를 바꿔보세요.",
+    snore_score: float = 0.95,
+):
+    """
+    Flutter 앱이 polling으로 가져갈 최신 알림 생성.
+    """
+    global latest_snore_alert_id
+    global latest_snore_alert
+
+    latest_snore_alert_id += 1
+
+    latest_snore_alert = {
+        "id": latest_snore_alert_id,
+        "type": "SNORE_ALERT",
+        "snoring": True,
+        "title": title,
+        "message": message,
+        "level": "WARNING",
+        "vibration": True,
+        "snore_score": snore_score,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    print(f"[SNORE_ALERT_CREATED] id={latest_snore_alert_id}")
+
+    return latest_snore_alert
 
 
 # =========================
@@ -113,10 +159,156 @@ def cleanup_old_snore_files():
                 pass
 
 
+def result_has_snoring(result: dict) -> bool:
+    """
+    binary 모델 결과, multi-label Snoring 라벨, 확률값을 모두 고려해서
+    최종적으로 코골이 여부를 판단한다.
+    """
+    if bool(result.get("snoring")):
+        return True
+
+    noise = result.get("noise", [])
+
+    if isinstance(noise, list):
+        for item in noise:
+            if not isinstance(item, dict):
+                continue
+
+            label = str(item.get("label", "")).lower()
+
+            if label == "snoring":
+                return True
+
+    try:
+        probability = float(result.get("snoring_probability") or 0)
+    except Exception:
+        probability = 0
+
+    return probability >= 0.50
+
+
+def get_snore_score(result: dict) -> float:
+    try:
+        return float(result.get("snoring_probability") or 0)
+    except Exception:
+        return 0.0
+
+
+async def create_snore_alert_if_needed(result: dict):
+    """
+    코골이 감지 시 최신 알림 생성.
+    WebSocket은 실패해도 괜찮고, Flutter polling이 /alerts/snore/latest로 가져감.
+    """
+    global last_snore_alert_time
+
+    is_snoring = result_has_snoring(result)
+
+    if not is_snoring:
+        return {
+            "created": False,
+            "reason": "not_snoring",
+            "alert_id": None,
+            "websocket_sent_count": 0,
+        }
+
+    now_time = time.time()
+
+    if now_time - last_snore_alert_time < SNORE_ALERT_COOLDOWN_SECONDS:
+        return {
+            "created": False,
+            "reason": "cooldown",
+            "alert_id": latest_snore_alert_id,
+            "websocket_sent_count": 0,
+        }
+
+    last_snore_alert_time = now_time
+
+    snore_score = get_snore_score(result)
+
+    alert = create_latest_snore_alert(
+        title="코골이 감지",
+        message="코골이가 감지되었습니다. 자세를 바꿔보세요.",
+        snore_score=snore_score,
+    )
+
+    sent_count = 0
+    try:
+        sent_count = await realtime_manager.broadcast(alert)
+    except Exception as e:
+        print(f"[WS_BROADCAST_FAILED] {e}")
+
+    return {
+        "created": True,
+        "reason": "created",
+        "alert_id": alert["id"],
+        "websocket_sent_count": sent_count,
+    }
+
+
 @app.get("/")
 def root():
     return {
         "message": "ZZCare API is running"
+    }
+
+
+# =========================
+# WebSocket 실시간 연결
+# =========================
+
+@app.websocket("/ws/snore")
+async def snore_websocket(websocket: WebSocket):
+    await realtime_manager.connect(websocket)
+
+    try:
+        while True:
+            await websocket.receive_text()
+
+    except WebSocketDisconnect:
+        realtime_manager.disconnect(websocket)
+
+    except Exception:
+        realtime_manager.disconnect(websocket)
+
+
+# =========================
+# 테스트 알림 / 폴링 API
+# =========================
+
+@app.post("/test/snore-alert")
+async def test_snore_alert():
+    alert = create_latest_snore_alert(
+        title="코골이 감지 테스트",
+        message="FastAPI에서 보낸 테스트 코골이 알림입니다.",
+        snore_score=0.95,
+    )
+
+    sent_count = 0
+    try:
+        sent_count = await realtime_manager.broadcast(alert)
+    except Exception as e:
+        print(f"[WS_BROADCAST_FAILED] {e}")
+
+    return {
+        "ok": True,
+        "message": "코골이 테스트 알림 생성 완료",
+        "alert_id": alert["id"],
+        "websocket_sent_count": sent_count,
+    }
+
+
+@app.get("/alerts/snore/latest")
+def get_latest_snore_alert(last_id: int = 0):
+    has_new = (
+        latest_snore_alert is not None
+        and latest_snore_alert_id > last_id
+    )
+
+    return {
+        "success": True,
+        "current_id": latest_snore_alert_id,
+        "has_new": has_new,
+        "alert": latest_snore_alert if has_new else None,
     }
 
 
@@ -240,37 +432,8 @@ def get_users():
 
 
 # =========================
-# 코골이 AI 예측 + DB 저장
+# 코골이 AI 예측 + DB 저장 + 알림 생성
 # =========================
-
-def result_has_snoring(result: dict) -> bool:
-    """
-    binary 모델 결과, multi-label Snoring 라벨, 확률값을 모두 고려해서
-    최종적으로 코골이 여부를 판단한다.
-    """
-    if bool(result.get("snoring")):
-        return True
-
-    noise = result.get("noise", [])
-
-    if isinstance(noise, list):
-        for item in noise:
-            if not isinstance(item, dict):
-                continue
-
-            label = str(item.get("label", "")).lower()
-
-            if label == "snoring":
-                return True
-
-    try:
-        probability = float(result.get("snoring_probability") or 0)
-    except Exception:
-        probability = 0
-
-    # 앱 화면 판별과 맞추기 위한 기준. 필요하면 0.60 / 0.75로 올려도 됨.
-    return probability >= 0.50
-
 
 @app.post("/predict")
 async def predict_audio(
@@ -312,13 +475,17 @@ async def predict_audio(
         # 2. AI 추론
         result = predict(temp_path)
 
+        # 3. 코골이 여부 판단
         should_save = result_has_snoring(result)
-        
+
+        # 4. 코골이면 최신 알림 생성
+        alert_info = await create_snore_alert_if_needed(result)
+
         event_id = None
         saved = False
         audio_filename = None
 
-        # 3. save=true이고, AI가 코골이라고 판단한 경우만 DB + 서버 파일 저장
+        # 5. save=true이고, AI가 코골이라고 판단한 경우만 DB + 서버 파일 저장
         if save and should_save:
             audio_filename = (
                 f"snore_{now.strftime('%Y%m%d_%H%M%S')}_"
@@ -332,16 +499,11 @@ async def predict_audio(
             doc = {
                 "user_id": user_id,
                 "timestamp": timestamp_value,
-
-                # TTL 자동 삭제 기준.
-                # 반드시 datetime 타입이어야 함.
                 "created_at": now,
-
                 "snoring": bool(should_save),
                 "snoring_probability": result.get("snoring_probability"),
                 "has_noise": bool(result.get("has_noise")),
                 "noise": result.get("noise", []),
-
                 "audio_path": str(saved_path),
                 "audio_filename": audio_filename,
             }
@@ -356,14 +518,20 @@ async def predict_audio(
             "event_id": event_id,
             "timestamp": timestamp_value,
             "audio_filename": audio_filename,
+            "snoring_detected": should_save,
+            "realtime_alert_created": alert_info["created"],
+            "alert_reason": alert_info["reason"],
+            "alert_id": alert_info["alert_id"],
+            "websocket_sent_count": alert_info["websocket_sent_count"],
             **result,
         }
 
     except HTTPException:
         raise
 
-    except Exception as e:
-        # DB 저장 중 실패했고 파일이 만들어졌다면 정리
+    except Exception:
+        traceback.print_exc()
+
         if saved_path and os.path.exists(saved_path):
             try:
                 os.remove(saved_path)
@@ -372,7 +540,7 @@ async def predict_audio(
 
         raise HTTPException(
             status_code=500,
-            detail=str(e),
+            detail=traceback.format_exc(),
         )
 
     finally:
