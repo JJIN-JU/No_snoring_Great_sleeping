@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 
-from app.feature import extract_librosa_mfcc
+from app.feature import extract_librosa_binary_mfcc
 
 # ========= 모델 경로 =========
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -78,7 +78,7 @@ def prepare_mfcc_for_model(mfcc) -> np.ndarray:
 
 def predict(filepath: str) -> dict:
     # 1. MFCC 생성
-    mfcc = extract_librosa_mfcc(filepath)
+    mfcc = extract_librosa_binary_mfcc(filepath)
 
     # 2. 모델 입력 shape로 변환
     mfcc = prepare_mfcc_for_model(mfcc)
@@ -116,3 +116,13 @@ def predict(filepath: str) -> dict:
         "has_noise": len(detected_noise) > 0,
         "noise": detected_noise,
     }
+
+def predict_batch(batch: np.ndarray) -> np.ndarray:
+    # 여러 개의 MFCC를 한 번에 Binary 모델로 추론
+
+    probability = binary_model.predict(
+        batch,
+        verbose=0,
+    ).reshape(-1)
+
+    return probability
