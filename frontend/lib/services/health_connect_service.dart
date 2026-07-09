@@ -68,6 +68,10 @@ class ApneaRiskSummary {
 class HealthConnectService {
   final Health _health = Health();
 
+  /// 화면에서 바로 확인할 수 있는 산소포화도 디버그 로그.
+  /// fetchApneaRiskHistory 호출할 때마다 새로 채워짐.
+  List<String> apneaDebugLog = [];
+
   final List<HealthDataType> _sleepTypes = const [
     HealthDataType.SLEEP_SESSION,
     HealthDataType.SLEEP_ASLEEP,
@@ -205,19 +209,31 @@ class HealthConnectService {
   Future<List<ApneaRiskSummary>> fetchApneaRiskHistory({int nights = 7}) async {
     await _health.configure();
 
+    final log = <String>[];
+    void addLog(String line) {
+      log.add(line);
+      // ignore: avoid_print
+      print('[APNEA_DEBUG] $line');
+    }
+
     // 먼저 수면 창을 알아야 그 구간의 SpO2를 집계할 수 있다.
     List<HealthSleepSummary> sleepSummaries;
 
     try {
       sleepSummaries = await fetchSleepHistory(nights: nights);
-    } catch (_) {
+    } catch (e) {
       // 수면 기록 자체가 없으면 산소포화도도 의미 있게 묶을 수 없음
+      addLog('fetchSleepHistory 실패: $e');
+      apneaDebugLog = log;
       return [];
     }
 
     final granted = await requestApneaPermission();
 
+    addLog('requestApneaPermission granted=$granted');
+
     if (!granted) {
+      apneaDebugLog = log;
       return sleepSummaries.map((s) => ApneaRiskSummary.empty(s.date)).toList();
     }
 
@@ -231,10 +247,25 @@ class HealthConnectService {
       endTime: end,
     );
 
+    addLog('raw points fetched=${points.length} (range $start ~ $end)');
+
     points = _health.removeDuplicates(points);
 
-    return sleepSummaries.map((sleep) {
+    addLog('after removeDuplicates=${points.length}');
+
+    for (final p in points) {
+      addLog(
+          '  point type=${p.type} from=${p.dateFrom} to=${p.dateTo} value=${p.value}');
+    }
+
+    for (final sleep in sleepSummaries) {
+      addLog(
+          'sleep date=${sleep.date} bedtime=${sleep.bedtime} wakeTime=${sleep.wakeTime}');
+    }
+
+    final result = sleepSummaries.map((sleep) {
       if (sleep.bedtime == null || sleep.wakeTime == null) {
+        addLog('skip ${sleep.date}: bedtime/wakeTime null');
         return ApneaRiskSummary.empty(sleep.date);
       }
 
@@ -242,8 +273,14 @@ class HealthConnectService {
         return _overlaps(p.dateFrom, p.dateTo, sleep.bedtime!, sleep.wakeTime!);
       }).toList();
 
+      addLog(
+          'date=${sleep.date} window=${sleep.bedtime}~${sleep.wakeTime} matched=${relatedPoints.length}');
+
       return _summarizeApnea(sleep.date, relatedPoints);
     }).toList();
+
+    apneaDebugLog = log;
+    return result;
   }
 
   ApneaRiskSummary _summarizeApnea(

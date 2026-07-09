@@ -72,6 +72,11 @@ class AppState extends ChangeNotifier {
   String? apneaError;
   List<ApneaRiskSummary> apneaHistory = [];
 
+  // 화면에서 바로 확인하는 산소포화도 디버그 로그 (컴퓨터 없이 폰에서 확인용)
+  String? apneaDebugText;
+
+  // 샘플 데이터 없음
+  // Health Connect 수면 데이터 또는 폰 마이크 측정 데이터가 들어올 때만 records에 추가됨
   final List<SleepRecord> _records = [];
 
   List<SleepRecord> get records => _records;
@@ -344,6 +349,7 @@ class AppState extends ChangeNotifier {
     try {
       final service = HealthConnectService();
       apneaHistory = await service.fetchApneaRiskHistory(nights: nights);
+      apneaDebugText = service.apneaDebugLog.join('\n');
     } catch (e) {
       apneaError = e.toString();
       apneaHistory = [];
