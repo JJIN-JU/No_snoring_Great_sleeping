@@ -1,0 +1,79 @@
+from app.model_service import predict_batch
+from app.feature import extract_librosa_binary_mfcc
+
+from pathlib import Path
+import tempfile
+import os
+import numpy as np
+
+from pydub import AudioSegment #pydub 설치필요
+
+def split_audio(filepath: str):
+
+    audio = AudioSegment.from_wav(filepath)
+
+    temp_dir = tempfile.mkdtemp()
+
+    segment_paths = []
+
+    for i in range(5):
+
+        start = i * 1000
+        end = (i + 1) * 1000
+
+        segment = audio[start:end]
+
+        segment_path = os.path.join(
+            temp_dir,
+            f"segment_{i}.wav"
+        )
+
+        segment.export(
+            segment_path,
+            format="wav"
+        )
+
+        segment_paths.append(segment_path)
+
+    return segment_paths
+
+
+def create_batch(segment_paths):
+
+    mfcc_list = []
+
+    for path in segment_paths:
+
+        mfcc = extract_librosa_binary_mfcc(path)
+
+        # (32,32) → (32,32,1)
+        mfcc = np.expand_dims(mfcc, axis=-1)
+
+        mfcc_list.append(mfcc)
+
+    batch = np.stack(mfcc_list)
+    print(batch.shape)
+
+    return batch
+
+def predict(filepath: str):
+
+    # 1. 5초 → 1초 분할
+    segment_paths = split_audio(filepath)
+
+    # 2. Batch 생성
+    batch = create_batch(segment_paths)
+
+    # 3. Batch 추론
+    probabilities = predict_batch(batch)
+
+    # 4. Voting
+    snore_count = int(np.sum(probabilities >= 0.5))
+
+    is_snoring = snore_count >= 3
+
+    return {
+        "snoring": is_snoring,
+        "snore_count": snore_count,
+        "segment_probability": probabilities.tolist(),
+    }

@@ -191,7 +191,7 @@ async def predict_audio(
             temp_path = temp.name
 
         # AI 추론
-        result = predict(temp_path)
+        result = detector.predict(temp_path)
 
         # 코골이 또는 잡음이 있는 경우만 저장
         if result["snoring"] or result["has_noise"]:
