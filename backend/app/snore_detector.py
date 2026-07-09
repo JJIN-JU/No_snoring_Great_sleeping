@@ -1,6 +1,7 @@
 from app.model_service import predict_batch
 from app.feature import extract_librosa_binary_mfcc
 
+import numpy as np
 from pathlib import Path
 import tempfile
 import os
@@ -37,7 +38,6 @@ def split_audio(filepath: str):
 
     return segment_paths
 
-import numpy as np
 
 
 def create_batch(segment_paths):
