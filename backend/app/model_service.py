@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 
-from app.feature import extract_librosa_mfcc
+from app.feature import extract_librosa_binary_mfcc
 
 # ========= 모델 경로 =========
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -28,7 +28,7 @@ LABELS = [
     "WhiteNoise",
 ]
 # =========Threshold=========
-BINARY_THRESHOLD = 0.40
+BINARY_THRESHOLD = 0.50
 MULTI_THRESHOLDS = {
     "Snoring": 0.50,
     "Baby": 0.32,
@@ -44,10 +44,6 @@ MULTI_THRESHOLDS = {
 
 
 def prepare_mfcc_for_model(mfcc) -> np.ndarray:
-    """
-    extract_librosa_mfcc 결과가 어떤 shape로 오더라도
-    최종적으로 모델 입력 shape인 (1, 32, 32, 1)로 맞춘다.
-    """
 
     x = np.asarray(mfcc, dtype=np.float32)
 
@@ -78,7 +74,7 @@ def prepare_mfcc_for_model(mfcc) -> np.ndarray:
 
 def predict(filepath: str) -> dict:
     # 1. MFCC 생성
-    mfcc = extract_librosa_mfcc(filepath)
+    mfcc = extract_librosa_binary_mfcc(filepath)
 
     # 2. 모델 입력 shape로 변환
     mfcc = prepare_mfcc_for_model(mfcc)
@@ -116,3 +112,12 @@ def predict(filepath: str) -> dict:
         "has_noise": len(detected_noise) > 0,
         "noise": detected_noise,
     }
+
+def predict_batch(batch):
+
+    probability = binary_model.predict(
+        batch,
+        verbose=0
+    ).reshape(-1)
+
+    return probability

@@ -25,7 +25,7 @@ from app.database import (
     snore_events,
     daily_stats,
 )
-from app.model_service import predict
+from app.snore_detector import predict
 from app.realtime_manager import realtime_manager
 
 
