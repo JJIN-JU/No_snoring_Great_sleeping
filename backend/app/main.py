@@ -29,6 +29,7 @@ from app.database import (
     daily_stats,
     snore_audio_fs,
 )
+from app.snore_detector import predict
 from app.realtime_manager import realtime_manager
 
 

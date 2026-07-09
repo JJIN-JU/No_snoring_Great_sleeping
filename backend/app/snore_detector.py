@@ -1,12 +1,13 @@
 from app.model_service import predict_batch
 from app.feature import extract_librosa_binary_mfcc
 
+import numpy as np
 from pathlib import Path
 import tempfile
 import os
-import numpy as np
 
-from pydub import AudioSegment #pydub 설치필요
+from pydub import AudioSegment #pydub 설치 필요
+
 
 def split_audio(filepath: str):
 
@@ -38,6 +39,7 @@ def split_audio(filepath: str):
     return segment_paths
 
 
+
 def create_batch(segment_paths):
 
     mfcc_list = []
@@ -52,7 +54,6 @@ def create_batch(segment_paths):
         mfcc_list.append(mfcc)
 
     batch = np.stack(mfcc_list)
-    print(batch.shape)
 
     return batch
 
@@ -74,6 +75,12 @@ def predict(filepath: str):
 
     return {
         "snoring": is_snoring,
+        "snoring_probability": round(float(np.mean(probabilities)), 4),
         "snore_count": snore_count,
+
+        # 기존 API 유지
+        "has_noise": False,
+        "noise": [],
+
         "segment_probability": probabilities.tolist(),
     }

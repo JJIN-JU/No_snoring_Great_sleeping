@@ -28,7 +28,7 @@ LABELS = [
     "WhiteNoise",
 ]
 # =========Threshold=========
-BINARY_THRESHOLD = 0.40
+BINARY_THRESHOLD = 0.50
 MULTI_THRESHOLDS = {
     "Snoring": 0.50,
     "Baby": 0.32,
@@ -44,10 +44,6 @@ MULTI_THRESHOLDS = {
 
 
 def prepare_mfcc_for_model(mfcc) -> np.ndarray:
-    """
-    extract_librosa_mfcc 결과가 어떤 shape로 오더라도
-    최종적으로 모델 입력 shape인 (1, 32, 32, 1)로 맞춘다.
-    """
 
     x = np.asarray(mfcc, dtype=np.float32)
 
@@ -117,12 +113,11 @@ def predict(filepath: str) -> dict:
         "noise": detected_noise,
     }
 
-def predict_batch(batch: np.ndarray) -> np.ndarray:
-    # 여러 개의 MFCC를 한 번에 Binary 모델로 추론
+def predict_batch(batch):
 
     probability = binary_model.predict(
         batch,
-        verbose=0,
+        verbose=0
     ).reshape(-1)
 
     return probability
