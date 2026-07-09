@@ -121,10 +121,6 @@ class _StatsTabState extends State<StatsTab> {
       const SizedBox(height: 16),
       _apneaRiskCard(),
       const SizedBox(height: 16),
-      if (widget.state.apneaDebugText != null) ...[
-        _apneaDebugCard(),
-        const SizedBox(height: 16),
-      ],
       _chartCard(
         '수면 시간 (시간)',
         _barChart(
@@ -322,30 +318,6 @@ class _StatsTabState extends State<StatsTab> {
           const Text(
             '※ 참고용 정보이며 의학적 진단이 아닙니다.',
             style: TextStyle(color: AppColors.muted, fontSize: 10),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // =========================
-  // 산소포화도 디버그 로그 (컴퓨터 없이 폰에서 확인용)
-  // =========================
-
-  Widget _apneaDebugCard() {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SectionTitle('산소포화도 디버그 로그'),
-          const SizedBox(height: 8),
-          SelectableText(
-            widget.state.apneaDebugText ?? '',
-            style: const TextStyle(
-              color: AppColors.muted,
-              fontSize: 11,
-              height: 1.4,
-            ),
           ),
         ],
       ),
