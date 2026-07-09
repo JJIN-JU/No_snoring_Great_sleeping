@@ -28,7 +28,7 @@ LABELS = [
     "WhiteNoise",
 ]
 # =========Threshold=========
-BINARY_THRESHOLD = 0.50
+BINARY_THRESHOLD = 0.40
 MULTI_THRESHOLDS = {
     "Snoring": 0.50,
     "Baby": 0.32,
