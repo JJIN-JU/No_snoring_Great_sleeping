@@ -2,11 +2,13 @@ import os
 import tempfile
 import time
 import traceback
+from app import snore_detector as detector
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
+from bson import ObjectId
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -17,6 +19,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.database import (
@@ -24,6 +27,7 @@ from app.database import (
     sleep_sessions,
     snore_events,
     daily_stats,
+    snore_audio_fs,
 )
 from app.snore_detector import predict
 from app.realtime_manager import realtime_manager
@@ -60,9 +64,6 @@ def create_latest_snore_alert(
     message: str = "코골이가 감지되었습니다. 자세를 바꿔보세요.",
     snore_score: float = 0.95,
 ):
-    """
-    Flutter 앱이 polling으로 가져갈 최신 알림 생성.
-    """
     global latest_snore_alert_id
     global latest_snore_alert
 
@@ -83,14 +84,6 @@ def create_latest_snore_alert(
     print(f"[SNORE_ALERT_CREATED] id={latest_snore_alert_id}")
 
     return latest_snore_alert
-
-
-# =========================
-# 업로드 파일 저장 폴더
-# =========================
-
-UPLOAD_DIR = Path("uploads/snore")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class KakaoLoginRequest(BaseModel):
@@ -119,6 +112,8 @@ def event_to_response(event: dict):
     if isinstance(created_at, datetime):
         created_at = created_at.isoformat()
 
+    audio_file_id = event.get("audio_file_id")
+
     return {
         "event_id": str(event["_id"]),
         "user_id": event.get("user_id"),
@@ -128,56 +123,179 @@ def event_to_response(event: dict):
         "snoring_probability": event.get("snoring_probability"),
         "has_noise": event.get("has_noise"),
         "noise": event.get("noise", []),
-        "audio_path": event.get("audio_path"),
+
+        # 5초 → 1초 5개 투표 결과
+        "snore_count": event.get("snore_count"),
+        "segment_count": event.get("segment_count"),
+        "vote_required": event.get("vote_required"),
+        "segment_probability": event.get("segment_probability", []),
+        "segments": event.get("segments", []),
+
+        # 새 구조
+        "audio_storage": event.get("audio_storage"),
+        "audio_file_id": audio_file_id,
         "audio_filename": event.get("audio_filename"),
+        "audio_url": (
+            f"/snore-events/audio/{audio_file_id}"
+            if audio_file_id
+            else None
+        ),
+
+        # 예전 구조 호환용
+        "audio_path": event.get("audio_path"),
     }
 
 
-def cleanup_old_snore_files():
+def cleanup_old_snore_audio_files():
     """
-    MongoDB TTL은 DB 문서만 지움.
-    서버에 저장된 오디오 파일은 별도로 7일 지난 파일을 삭제해야 함.
+    GridFS에 저장된 7일 지난 오디오 파일 삭제.
+    snore_events는 TTL로 삭제되고, GridFS 오디오는 여기서 직접 삭제한다.
     """
-    if not UPLOAD_DIR.exists():
-        return
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    cutoff_naive = cutoff.replace(tzinfo=None)
 
-    for file_path in UPLOAD_DIR.iterdir():
-        if not file_path.is_file():
-            continue
-
-        modified_at = datetime.fromtimestamp(
-            file_path.stat().st_mtime,
-            tz=timezone.utc,
+    try:
+        old_files = snore_audio_fs.find(
+            {
+                "uploadDate": {
+                    "$lt": cutoff_naive,
+                }
+            }
         )
 
-        if modified_at < cutoff:
+        deleted_count = 0
+
+        for grid_file in old_files:
             try:
-                file_path.unlink()
+                snore_audio_fs.delete(grid_file._id)
+                deleted_count += 1
             except Exception:
                 pass
+
+        if deleted_count > 0:
+            print(f"[GRIDFS_CLEANUP] deleted={deleted_count}")
+
+    except Exception as e:
+        print(f"[GRIDFS_CLEANUP_FAILED] {e}")
+
+
+def delete_gridfs_audio_file(audio_file_id: str) -> bool:
+    try:
+        object_id = ObjectId(audio_file_id)
+    except Exception:
+        return False
+
+    try:
+        if snore_audio_fs.exists(object_id):
+            snore_audio_fs.delete(object_id)
+            return True
+    except Exception:
+        return False
+
+    return False
+
+
+def normalize_detector_result(result: dict) -> dict:
+    """
+    snore_detector.py의 결과를 기존 main.py / Flutter가 쓰던 응답 형식에 맞춘다.
+    snore_detector.py 자체는 그대로 둬도 된다.
+    
+    기존 snore_detector.py 반환 예:
+    {
+        "snoring": true,
+        "snore_count": 3,
+        "segment_probability": [0.8, 0.7, 0.1, 0.9, 0.2]
+    }
+    """
+
+    segment_probability = result.get("segment_probability", [])
+
+    if isinstance(segment_probability, list):
+        cleaned_probabilities = []
+
+        for value in segment_probability:
+            try:
+                cleaned_probabilities.append(round(float(value), 4))
+            except Exception:
+                cleaned_probabilities.append(0.0)
+    else:
+        cleaned_probabilities = []
+
+    segment_count = len(cleaned_probabilities)
+
+    try:
+        snore_count = int(result.get("snore_count") or 0)
+    except Exception:
+        snore_count = 0
+
+    vote_required = int(result.get("vote_required") or 3)
+    is_snoring = bool(result.get("snoring"))
+
+    max_probability = (
+        max(cleaned_probabilities)
+        if cleaned_probabilities
+        else 0.0
+    )
+
+    avg_probability = (
+        sum(cleaned_probabilities) / len(cleaned_probabilities)
+        if cleaned_probabilities
+        else 0.0
+    )
+
+    segments = []
+
+    for index, probability in enumerate(cleaned_probabilities):
+        segments.append(
+            {
+                "index": index,
+                "start_second": index,
+                "end_second": index + 1,
+                "snoring_probability": probability,
+                "snoring": probability >= 0.50,
+            }
+        )
+
+    return {
+        **result,
+
+        # 기존 코드 호환용 필드
+        "snoring": is_snoring,
+        "snoring_detected": is_snoring,
+        "snoring_probability": round(max_probability, 4),
+        "max_snoring_probability": round(max_probability, 4),
+        "avg_snoring_probability": round(avg_probability, 4),
+        "has_noise": is_snoring,
+        "noise": [
+            {
+                "label": "Snoring",
+                "probability": round(max_probability, 4),
+            }
+        ] if is_snoring else [],
+
+        # 투표 결과 필드
+        "segment_count": segment_count,
+        "snore_count": snore_count,
+        "vote_required": vote_required,
+        "segment_probability": cleaned_probabilities,
+        "segments": segments,
+    }
 
 
 def result_has_snoring(result: dict) -> bool:
     """
-    binary 모델 결과, multi-label Snoring 라벨, 확률값을 모두 고려해서
-    최종적으로 코골이 여부를 판단한다.
+    snore_detector.py의 5초 → 1초 5개 투표 결과를 최우선으로 사용한다.
     """
+
+    if "snore_count" in result and "segment_count" in result:
+        return bool(result.get("snoring"))
+
     if bool(result.get("snoring")):
         return True
 
-    noise = result.get("noise", [])
-
-    if isinstance(noise, list):
-        for item in noise:
-            if not isinstance(item, dict):
-                continue
-
-            label = str(item.get("label", "")).lower()
-
-            if label == "snoring":
-                return True
+    if bool(result.get("snoring_detected")):
+        return True
 
     try:
         probability = float(result.get("snoring_probability") or 0)
@@ -195,10 +313,6 @@ def get_snore_score(result: dict) -> float:
 
 
 async def create_snore_alert_if_needed(result: dict):
-    """
-    코골이 감지 시 최신 알림 생성.
-    WebSocket은 실패해도 괜찮고, Flutter polling이 /alerts/snore/latest로 가져감.
-    """
     global last_snore_alert_time
 
     is_snoring = result_has_snoring(result)
@@ -232,6 +346,7 @@ async def create_snore_alert_if_needed(result: dict):
     )
 
     sent_count = 0
+
     try:
         sent_count = await realtime_manager.broadcast(alert)
     except Exception as e:
@@ -248,13 +363,9 @@ async def create_snore_alert_if_needed(result: dict):
 @app.get("/")
 def root():
     return {
-        "message": "ZZCare API is running"
+        "message": "ZZCare API is running",
     }
 
-
-# =========================
-# WebSocket 실시간 연결
-# =========================
 
 @app.websocket("/ws/snore")
 async def snore_websocket(websocket: WebSocket):
@@ -271,10 +382,6 @@ async def snore_websocket(websocket: WebSocket):
         realtime_manager.disconnect(websocket)
 
 
-# =========================
-# 테스트 알림 / 폴링 API
-# =========================
-
 @app.post("/test/snore-alert")
 async def test_snore_alert():
     alert = create_latest_snore_alert(
@@ -284,6 +391,7 @@ async def test_snore_alert():
     )
 
     sent_count = 0
+
     try:
         sent_count = await realtime_manager.broadcast(alert)
     except Exception as e:
@@ -311,10 +419,6 @@ def get_latest_snore_alert(last_id: int = 0):
         "alert": latest_snore_alert if has_new else None,
     }
 
-
-# =========================
-# 카카오 로그인 / 회원 저장
-# =========================
 
 @app.post("/auth/kakao")
 def save_kakao_user(payload: KakaoLoginRequest):
@@ -382,10 +486,30 @@ def delete_kakao_user(kakao_id: str):
             "deleted_user": 0,
             "deleted_sleep_sessions": 0,
             "deleted_snore_events": 0,
+            "deleted_snore_audio_files": 0,
             "deleted_daily_stats": 0,
         }
 
     user_id = str(user["_id"])
+
+    snore_event_docs = list(
+        snore_events.find(
+            {"user_id": user_id},
+            {"audio_file_id": 1},
+        )
+    )
+
+    audio_file_ids = {
+        str(doc.get("audio_file_id"))
+        for doc in snore_event_docs
+        if doc.get("audio_file_id")
+    }
+
+    deleted_snore_audio_files = 0
+
+    for audio_file_id in audio_file_ids:
+        if delete_gridfs_audio_file(audio_file_id):
+            deleted_snore_audio_files += 1
 
     deleted_sleep_sessions = sleep_sessions.delete_many(
         {"user_id": user_id}
@@ -412,6 +536,7 @@ def delete_kakao_user(kakao_id: str):
         "deleted_user": deleted_user,
         "deleted_sleep_sessions": deleted_sleep_sessions,
         "deleted_snore_events": deleted_snore_events,
+        "deleted_snore_audio_files": deleted_snore_audio_files,
         "deleted_daily_stats": deleted_daily_stats,
     }
 
@@ -430,144 +555,63 @@ def get_users():
         ],
     }
 
-
-# =========================
-# 코골이 AI 예측 + DB 저장 + 알림 생성
-# =========================
-
 @app.post("/predict")
 async def predict_audio(
     user_id: str = Form(...),
     timestamp: Optional[str] = Form(None),
-    save: bool = Form(True),
-    file: UploadFile = File(...),
+    file: UploadFile = File(...)
 ):
+
     temp_path = None
-    saved_path = None
 
     try:
-        cleanup_old_snore_files()
 
-        now = datetime.now(timezone.utc)
-        timestamp_value = timestamp or now.isoformat()
-
-        original_suffix = Path(file.filename or "").suffix.lower()
-
-        if original_suffix not in [".wav", ".m4a", ".mp3", ".aac"]:
-            original_suffix = ".wav"
-
-        content = await file.read()
-
-        if not content:
-            raise HTTPException(
-                status_code=400,
-                detail="업로드된 오디오 파일이 비어 있습니다.",
-            )
-
-        # 1. AI 예측용 임시파일 생성
+        # 업로드한 wav를 임시 저장
         with tempfile.NamedTemporaryFile(
             delete=False,
-            suffix=original_suffix,
+            suffix=".wav"
         ) as temp:
-            temp.write(content)
+
+            temp.write(await file.read())
             temp_path = temp.name
 
-        # 2. AI 추론
-        result = predict(temp_path)
+        # AI 추론
+        raw_result = detector.predict(temp_path)
+        result = normalize_detector_result(raw_result)
 
-        # 3. 코골이 여부 판단
-        should_save = result_has_snoring(result)
+        # 코골이 또는 잡음이 있는 경우만 저장
+        if result["snoring"] or result["has_noise"]:
 
-        # 4. 코골이면 최신 알림 생성
-        alert_info = await create_snore_alert_if_needed(result)
+            snore_events.insert_one({
 
-        event_id = None
-        saved = False
-        audio_filename = None
-
-        # 5. save=true이고, AI가 코골이라고 판단한 경우만 DB + 서버 파일 저장
-        if save and should_save:
-            audio_filename = (
-                f"snore_{now.strftime('%Y%m%d_%H%M%S')}_"
-                f"{uuid4().hex}{original_suffix}"
-            )
-            saved_path = UPLOAD_DIR / audio_filename
-
-            with open(saved_path, "wb") as out:
-                out.write(content)
-
-            doc = {
                 "user_id": user_id,
-                "timestamp": timestamp_value,
-                "created_at": now,
-                "snoring": bool(should_save),
-                "snoring_probability": result.get("snoring_probability"),
-                "has_noise": bool(result.get("has_noise")),
-                "noise": result.get("noise", []),
-                "audio_path": str(saved_path),
-                "audio_filename": audio_filename,
-            }
 
-            insert_result = snore_events.insert_one(doc)
-            event_id = str(insert_result.inserted_id)
-            saved = True
+                "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
+
+                "snoring": result["snoring"],
+
+                "created_at": datetime.now(timezone.utc).isoformat(),
+
+                "snoring_probability": result["snoring_probability"],
+
+                "has_noise": result["has_noise"],
+
+                "noise": result["noise"]
+
+            })
 
         return {
-            "success": True,
-            "saved": saved,
-            "event_id": event_id,
-            "timestamp": timestamp_value,
-            "audio_filename": audio_filename,
-            "snoring_detected": should_save,
-            "realtime_alert_created": alert_info["created"],
-            "alert_reason": alert_info["reason"],
-            "alert_id": alert_info["alert_id"],
-            "websocket_sent_count": alert_info["websocket_sent_count"],
             **result,
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception:
-        traceback.print_exc()
-
-        if saved_path and os.path.exists(saved_path):
-            try:
-                os.remove(saved_path)
-            except Exception:
-                pass
+            "timestamp": timestamp or now}
+            
+    except Exception as e:
 
         raise HTTPException(
             status_code=500,
-            detail=traceback.format_exc(),
+            detail=str(e)
         )
 
     finally:
+
         if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
-
-
-@app.get("/snore-events/{user_id}")
-def get_snore_events(user_id: str):
-    """
-    사용자의 최근 7일 코골이 이벤트 조회.
-    TTL로 7일 지난 데이터는 자동 삭제됨.
-    """
-    events = list(
-        snore_events.find(
-            {"user_id": user_id}
-        ).sort("created_at", -1)
-    )
-
-    return {
-        "success": True,
-        "count": len(events),
-        "events": [
-            event_to_response(event)
-            for event in events
-        ],
-    }
+            os.remove(temp_path)

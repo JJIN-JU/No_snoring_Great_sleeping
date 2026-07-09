@@ -13,7 +13,10 @@ import '../services/snore_measure_service.dart';
 import '../theme.dart';
 
 class AppState extends ChangeNotifier {
-  static const double aiSnoringProbabilityThreshold = 0.005;
+  static const double aiSnoringProbabilityThreshold = 0.40;
+  static const double noiseSnoringProbabilityThreshold = 0.50;
+  static const int snoreVoteRequiredCount = 3;
+  static const int snoreNotificationCooldownSeconds = 5;
 
   // =========================
   // 로그인 상태
@@ -450,12 +453,18 @@ class AppState extends ChangeNotifier {
         save: false,
       );
 
-      final probability = _toDouble(result['snoring_probability']);
+      final binaryProbability = _toDouble(result['snoring_probability']);
+      final snoringNoiseProbability = _snoringNoiseProbability(result['noise']);
+      final finalProbability = _finalSnoringScore(result);
       final isSnoring = _isAiSnoringResult(result);
+      final votesText = _votesText(result);
 
       debugPrint(
         '실시간 5초 조각 AI 판별: ${clip.time} / '
-        '확률 ${probability.toStringAsFixed(4)} / '
+        '최종확률 ${finalProbability.toStringAsFixed(4)} '
+        '(binary ${binaryProbability.toStringAsFixed(4)}, '
+        'Snoring ${snoringNoiseProbability.toStringAsFixed(4)}) / '
+        '$votesText / '
         '${isSnoring ? '코골이 O' : '코골이 X'}',
       );
 
@@ -471,7 +480,7 @@ class AppState extends ChangeNotifier {
     SnoreMeasureResult rawResult,
   ) async {
     if (rawResult.audioClips.isEmpty) {
-      snoreAiDebugText = 'AI 판별 결과: 분석할 10초 녹음 조각이 없습니다. 최소 12초 이상 측정해보세요.';
+      snoreAiDebugText = 'AI 판별 결과: 분석할 5초 녹음 조각이 없습니다. 최소 6초 이상 측정해보세요.';
       return rawResult;
     }
 
@@ -510,8 +519,11 @@ class AppState extends ChangeNotifier {
           save: false,
         );
 
-        final probability = _toDouble(result['snoring_probability']);
+        final binaryProbability = _toDouble(result['snoring_probability']);
+        final snoringNoiseProbability = _snoringNoiseProbability(result['noise']);
+        final finalProbability = _finalSnoringScore(result);
         final isSnoring = _isAiSnoringResult(result);
+        final votesText = _votesText(result);
         final noiseText = _noiseLabelsText(result['noise']);
         final judgmentText = isSnoring ? '코골이 O' : '코골이 X';
 
@@ -519,7 +531,10 @@ class AppState extends ChangeNotifier {
           '${i + 1}. ${clip.time} / ${clip.durationSeconds}초 / '
           '평균 ${clip.avgDb.toStringAsFixed(1)}dB / '
           '최대 ${clip.maxDb.toStringAsFixed(1)}dB / '
-          'AI확률 ${probability.toStringAsFixed(4)} / '
+          'AI확률 ${finalProbability.toStringAsFixed(4)} '
+          '(binary ${binaryProbability.toStringAsFixed(4)}, '
+          'Snoring ${snoringNoiseProbability.toStringAsFixed(4)}) / '
+          '$votesText / '
           '판정 $judgmentText / '
           'noise: $noiseText',
         );
@@ -529,7 +544,7 @@ class AppState extends ChangeNotifier {
             _ClassifiedSnoreClip(
               index: i,
               clip: clip,
-              probability: probability,
+              probability: finalProbability,
             ),
           );
         }
@@ -544,13 +559,13 @@ class AppState extends ChangeNotifier {
     if (detected.isEmpty) {
       snoreAiDebugText = 'AI 판별 결과\n'
           '총 ${rawResult.audioClips.length}개 조각 분석 / 코골이 0개\n'
-          '기준 확률: ${aiSnoringProbabilityThreshold.toStringAsFixed(2)}\n\n'
+          '기준: binary ${aiSnoringProbabilityThreshold.toStringAsFixed(2)} / Snoring ${noiseSnoringProbabilityThreshold.toStringAsFixed(2)} / 1초투표 ${snoreVoteRequiredCount}개 이상\n\n'
           '${debugLines.join('\n')}';
 
       if (lastError != null) {
         snoreError = '코골이 AI 판별 실패: $lastError';
       } else {
-        snoreError = 'AI가 코골이로 판단한 10초 녹음이 없습니다. 아래 AI 판별 결과를 확인해보세요.';
+        snoreError = 'AI가 코골이로 판단한 5초 녹음이 없습니다. 아래 AI 판별 결과를 확인해보세요.';
       }
 
       await _deleteLocalClipFiles(rawResult.audioClips);
@@ -578,7 +593,7 @@ class AppState extends ChangeNotifier {
     snoreAiDebugText = 'AI 판별 결과\n'
         '총 ${rawResult.audioClips.length}개 조각 분석 / '
         '코골이 ${detected.length}개 / 화면 표시 TOP ${selected.length}개\n'
-        '기준 확률: ${aiSnoringProbabilityThreshold.toStringAsFixed(2)}\n\n'
+        '기준: binary ${aiSnoringProbabilityThreshold.toStringAsFixed(2)} / Snoring ${noiseSnoringProbabilityThreshold.toStringAsFixed(2)} / 1초투표 ${snoreVoteRequiredCount}개 이상\n\n'
         '${debugLines.join('\n')}';
 
     await _deleteUnselectedLocalClips(
@@ -726,6 +741,76 @@ class AppState extends ChangeNotifier {
     return labels.join(', ');
   }
 
+  double _snoringNoiseProbability(dynamic noise) {
+    if (noise is! List) {
+      return 0;
+    }
+
+    var maxProbability = 0.0;
+
+    for (final item in noise) {
+      if (item is Map) {
+        final label = item['label']?.toString().toLowerCase();
+        final probability = _toDouble(item['probability']);
+
+        if (label == 'snoring' && probability > maxProbability) {
+          maxProbability = probability;
+        }
+      }
+    }
+
+    return maxProbability;
+  }
+
+  double _finalSnoringScore(Map<String, dynamic> result) {
+    final binaryProbability = _toDouble(result['snoring_probability']);
+    final snoringNoiseProbability = _snoringNoiseProbability(result['noise']);
+
+    return binaryProbability > snoringNoiseProbability
+        ? binaryProbability
+        : snoringNoiseProbability;
+  }
+
+  int _snoringVoteCount(Map<String, dynamic> result) {
+    final rawVoteCount = result['snore_count'] ?? result['snoring_vote_count'];
+
+    if (rawVoteCount is int) {
+      return rawVoteCount;
+    }
+
+    return int.tryParse(rawVoteCount?.toString() ?? '') ?? 0;
+  }
+
+  int _snoringRequiredVotes(Map<String, dynamic> result) {
+    final rawRequired = result['vote_required'] ?? result['snoring_required_votes'];
+
+    if (rawRequired is int) {
+      return rawRequired;
+    }
+
+    return int.tryParse(rawRequired?.toString() ?? '') ?? snoreVoteRequiredCount;
+  }
+
+  int _snoringTotalChunks(Map<String, dynamic> result) {
+    final rawTotal = result['segment_count'] ?? result['snoring_total_chunks'];
+
+    if (rawTotal is int) {
+      return rawTotal;
+    }
+
+    return int.tryParse(rawTotal?.toString() ?? '') ?? 0;
+  }
+
+  String _votesText(Map<String, dynamic> result) {
+    final total = _snoringTotalChunks(result);
+
+    if (total <= 0) {
+      return '투표 -';
+    }
+
+    return '투표 ${_snoringVoteCount(result)}/$total, 기준 ${_snoringRequiredVotes(result)}';
+  }
+
   Future<void> _notifySnoringIfNeeded(Map<String, dynamic> result) async {
     final isSnoring = _isAiSnoringResult(result);
 
@@ -733,27 +818,26 @@ class AppState extends ChangeNotifier {
       return;
     }
 
-    /*
-    //알림도 5초마다 울리게 할지 확인... 어뜩할까여 일단 지금은 뺌!
     final now = DateTime.now();
 
     final canNotify = _lastSnoreNotificationAt == null ||
-        now.difference(_lastSnoreNotificationAt!).inSeconds >= 30;
+        now.difference(_lastSnoreNotificationAt!).inSeconds >=
+            snoreNotificationCooldownSeconds;
 
     if (!canNotify) {
-      debugPrint('코골이 감지됨 but 30초 알림 쿨다운 중');
+      debugPrint('코골이 감지됨 but ${snoreNotificationCooldownSeconds}초 알림 쿨다운 중');
       return;
     }
 
     _lastSnoreNotificationAt = now;
-    */
-    final probability = _toDouble(result['snoring_probability']);
-    final percentText = (probability * 100).toStringAsFixed(1);
+
+    final percentText = (_finalSnoringScore(result) * 100).toStringAsFixed(1);
+    final votesText = _votesText(result);
 
     try {
       await SnoreNotificationService.showSnoreAlert(
         title: '코골이 감지',
-        body: '코골이가 감지되었습니다. 자세를 바꿔보세요. 감지 확률 $percentText%',
+        body: '코골이가 감지되었습니다. 자세를 바꿔보세요. 감지 확률 $percentText% ($votesText)',
       );
 
       debugPrint('코골이 감지 → 폰/워치 진동 알림 실행');
@@ -771,23 +855,21 @@ class AppState extends ChangeNotifier {
       return true;
     }
 
-    final noise = result['noise'];
+    final totalChunks = _snoringTotalChunks(result);
 
-    if (noise is List) {
-      for (final item in noise) {
-        if (item is Map) {
-          final label = item['label']?.toString().toLowerCase();
-
-          if (label == 'snoring') {
-            return true;
-          }
-        }
-      }
+    if (totalChunks > 0) {
+      return _snoringVoteCount(result) >= _snoringRequiredVotes(result);
     }
 
-    final probability = _toDouble(result['snoring_probability']);
+    final binaryProbability = _toDouble(result['snoring_probability']);
 
-    return probability >= aiSnoringProbabilityThreshold;
+    if (binaryProbability >= aiSnoringProbabilityThreshold) {
+      return true;
+    }
+
+    final snoringNoiseProbability = _snoringNoiseProbability(result['noise']);
+
+    return snoringNoiseProbability >= noiseSnoringProbabilityThreshold;
   }
 
   double _toDouble(dynamic value) {
