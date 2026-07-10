@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import '../state/app_state.dart';
 import '../theme.dart';
 
 /// 카드 컨테이너
@@ -104,6 +106,66 @@ class SectionTitle extends StatelessWidget {
           fontWeight: FontWeight.bold,
         ),
       ),
+    );
+  }
+}
+
+// 날짜 헤더
+class DateHeader extends StatelessWidget {
+  final AppState state;
+
+  const DateHeader({
+    super.key,
+    required this.state,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final d = state.current.date;
+    final label = DateFormat('M월 d일 (E)', 'ko').format(d);
+
+    final rel = state.selectedIndex == 0
+        ? '오늘'
+        : state.selectedIndex == 1
+            ? '어제'
+            : '${state.selectedIndex}일 전';
+
+    return Row(
+      children: [
+        IconButton(
+          onPressed: state.canGoPrev ? state.goPrev : null,
+          icon: const Icon(Icons.chevron_left),
+          color: AppColors.foreground,
+          disabledColor: AppColors.border,
+        ),
+        Expanded(
+          child: Column(
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: AppColors.foreground,
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                rel,
+                style: const TextStyle(
+                  color: AppColors.muted,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          onPressed: state.canGoNext ? state.goNext : null,
+          icon: const Icon(Icons.chevron_right),
+          color: AppColors.foreground,
+          disabledColor: AppColors.border,
+        ),
+      ],
     );
   }
 }
