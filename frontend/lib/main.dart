@@ -35,7 +35,6 @@ class SleepCareApp extends StatefulWidget {
 class _SleepCareAppState extends State<SleepCareApp> {
   final AppState _state = AppState();
   bool _showSplash = true;
-
   @override
   void dispose() {
     _state.dispose();
