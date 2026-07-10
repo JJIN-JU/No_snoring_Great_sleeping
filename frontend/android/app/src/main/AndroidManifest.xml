@@ -100,6 +100,18 @@
         <!-- 카카오톡 설치 여부 확인 -->
         <package android:name="com.kakao.talk" />
 
+        <!-- YouTube 앱 확인 -->
+        <package android:name="com.google.android.youtube" />
+
+        <!-- YouTube Music 앱 확인 -->
+        <package android:name="com.google.android.apps.youtube.music" />
+
+        <!-- YouTube 링크 열기 확인 -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+
         <!-- Health Connect 앱 확인 -->
         <package android:name="com.google.android.apps.healthdata" />
 
