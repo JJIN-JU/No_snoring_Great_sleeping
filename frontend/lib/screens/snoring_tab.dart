@@ -73,6 +73,10 @@ class SnoringTab extends StatelessWidget {
   }
 
   Future<void> _toggleMeasure(BuildContext context) async {
+    if (state.stoppingMeasurement) {
+      return;
+    }
+
     if (state.measuring) {
       final confirm = await showDialog<bool>(
         context: context,
@@ -128,6 +132,8 @@ class SnoringTab extends StatelessWidget {
     final r = state.current;
     final timeline = r.snoreTimeline;
     final isMeasuring = state.measuring;
+    final isStopping = state.stoppingMeasurement;
+    final isMeasureActive = isMeasuring || isStopping;
 
     final snorePercent = _safeSnorePercent(
       r.snoreHours,
@@ -170,7 +176,7 @@ class SnoringTab extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (isMeasuring)
+              if (isMeasureActive)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -203,8 +209,8 @@ class SnoringTab extends StatelessWidget {
                     ),
                   ],
                 ),
-              if (isMeasuring) const SizedBox(height: 24),
-              if (!isMeasuring)
+              if (isMeasureActive) const SizedBox(height: 24),
+              if (!isMeasureActive)
                 // 측정 시작 전: 안내 이미지 (제목 없이 바로 표시)
                 Center(
                   child: ClipRRect(
@@ -236,9 +242,9 @@ class SnoringTab extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 20),
-                      const Text(
-                        '측정 중',
-                        style: TextStyle(
+                      Text(
+                        isStopping ? '저장 중' : '측정 중',
+                        style: const TextStyle(
                           color: AppColors.foreground,
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -277,19 +283,23 @@ class SnoringTab extends StatelessWidget {
               SizedBox(
                 height: 56,
                 child: ElevatedButton(
-                  onPressed: () => _toggleMeasure(context),
+                  onPressed: isStopping ? null : () => _toggleMeasure(context),
                   style: ElevatedButton.styleFrom(
                     backgroundColor:
-                        isMeasuring ? AppColors.pink : AppColors.foreground,
+                        isMeasureActive ? AppColors.pink : AppColors.foreground,
                     foregroundColor:
-                        isMeasuring ? Colors.white : AppColors.background,
+                        isMeasureActive ? Colors.white : AppColors.background,
                     elevation: 0,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(999),
                     ),
                   ),
                   child: Text(
-                    isMeasuring ? '측정 종료' : '수면 측정 시작',
+                    isStopping
+                        ? '저장 중...'
+                        : isMeasuring
+                            ? '측정 종료'
+                            : '수면 측정 시작',
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.bold,
@@ -354,7 +364,7 @@ class SnoringTab extends StatelessWidget {
         // =========================
         // 측정 전 안내
         // =========================
-        if (!hasReport && !isMeasuring)
+        if (!hasReport && !isMeasureActive)
           AppCard(
             child: Column(
               children: [
@@ -385,7 +395,7 @@ class SnoringTab extends StatelessWidget {
             ),
           ),
 
-        if (!hasReport && !isMeasuring) const SizedBox(height: 16),
+        if (!hasReport && !isMeasureActive) const SizedBox(height: 16),
 
         // =========================
         // 코골이 리포트
@@ -815,7 +825,7 @@ class _SnoreAudioClipCardState extends State<_SnoreAudioClipCard> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '${_durationText(clip.durationSeconds)} · 평균 ${clip.avgDb.round()}dB · 최대 ${clip.maxDb.round()}dB',
+                            '${_durationText(math.min(clip.durationSeconds, 5))} · 평균 ${clip.avgDb.round()}dB · 최대 ${clip.maxDb.round()}dB',
                             style: const TextStyle(
                               color: AppColors.muted,
                               fontSize: 12,
