@@ -42,6 +42,15 @@ class _SleepCareAppState extends State<SleepCareApp> {
   }
 
   @override
+  void initState() {
+    super.initState();
+
+    // ⚠️ 임시: 카카오 로그인 없이 테스트하기 위한 우회 코드
+    // 테스트 끝나면 이 줄 삭제할 것
+    _state.loggedIn = true;
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '숙면 - 수면 헬스케어',

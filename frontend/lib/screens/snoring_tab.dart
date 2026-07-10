@@ -155,19 +155,8 @@ class SnoringTab extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
-        const Padding(
-          padding: EdgeInsets.only(top: 8, bottom: 16),
-          child: Center(
-            child: Text(
-              '코골이 측정',
-              style: TextStyle(
-                color: AppColors.foreground,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
+        DateHeader(state: state),
+        const SizedBox(height: 16),
 
         // =========================
         // 수면 측정 시작 카드
@@ -262,7 +251,7 @@ class SnoringTab extends StatelessWidget {
                     ],
                   ),
                 ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
               _TimeRow(
                 icon: Icons.nights_stay_rounded,
                 iconColor: AppColors.primary,

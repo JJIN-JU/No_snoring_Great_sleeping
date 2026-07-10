@@ -14,6 +14,18 @@ class SleepTab extends StatelessWidget {
     required this.state,
   });
 
+  String _spO2SubText(double avgSpO2) {
+    if (avgSpO2 >= 95) return '정상 범위';
+    if (avgSpO2 >= 90) return '약간 낮음';
+    return '주의 필요';
+  }
+
+  String _respRateSubText(double avgRate) {
+    if (avgRate >= 12 && avgRate <= 20) return '정상 범위';
+    if (avgRate < 12) return '느린 편';
+    return '빠른 편';
+  }
+
   String _fmt(double h) {
     final hours = h.floor();
     final mins = ((h - hours) * 60).round();
@@ -25,10 +37,18 @@ class SleepTab extends StatelessWidget {
     final r = state.current;
     final totalStage = r.stages.fold<double>(0, (s, e) => s + e.minutes);
 
+    final todayApnea = state.apneaHistory.where((a) {
+      final d = state.current.date;
+      return a.date.year == d.year &&
+          a.date.month == d.month &&
+          a.date.day == d.day;
+    }).firstOrNull;
+    final hasApneaData = todayApnea != null && todayApnea.hasData;
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       children: [
-        _DateHeader(state: state),
+        DateHeader(state: state),
         const SizedBox(height: 16),
         _HealthSyncInfo(state: state),
         const SizedBox(height: 16),
@@ -164,21 +184,29 @@ class SleepTab extends StatelessWidget {
           children: [
             Expanded(
               child: StatCard(
-                icon: Icons.graphic_eq,
-                label: '평균 코골이',
-                value: '${r.avgSnoreDb.round()} dB',
-                sub: '최대 ${r.maxSnoreDb.round()} dB',
-                color: AppColors.pink,
+                icon: Icons.bloodtype_outlined,
+                label: '평균 산소포화도',
+                value: hasApneaData && todayApnea!.avgSpO2 != null
+                    ? '${todayApnea.avgSpO2!.round()}%'
+                    : '--%',
+                sub: hasApneaData && todayApnea!.avgSpO2 != null
+                    ? _spO2SubText(todayApnea.avgSpO2!)
+                    : '워치 연동 필요',
+                color: AppColors.accent,
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: StatCard(
-                icon: Icons.volume_up,
-                label: '평균 소음',
-                value: '${r.noiseDb.round()} dB',
-                sub: '조용한 편',
-                color: AppColors.accent,
+                icon: Icons.air_rounded,
+                label: '평균 호흡수',
+                value: hasApneaData && todayApnea!.avgRespiratoryRate != null
+                    ? '${todayApnea.avgRespiratoryRate!.round()}회/분'
+                    : '--회/분',
+                sub: hasApneaData && todayApnea!.avgRespiratoryRate != null
+                    ? _respRateSubText(todayApnea.avgRespiratoryRate!)
+                    : '워치 연동 필요',
+                color: AppColors.primary,
               ),
             ),
           ],
@@ -415,64 +443,6 @@ class SleepTab extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _DateHeader extends StatelessWidget {
-  final AppState state;
-
-  const _DateHeader({
-    required this.state,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final d = state.current.date;
-    final label = DateFormat('M월 d일 (E)', 'ko').format(d);
-
-    final rel = state.selectedIndex == 0
-        ? '오늘'
-        : state.selectedIndex == 1
-            ? '어제'
-            : '${state.selectedIndex}일 전';
-
-    return Row(
-      children: [
-        IconButton(
-          onPressed: state.canGoPrev ? state.goPrev : null,
-          icon: const Icon(Icons.chevron_left),
-          color: AppColors.foreground,
-          disabledColor: AppColors.border,
-        ),
-        Expanded(
-          child: Column(
-            children: [
-              Text(
-                label,
-                style: const TextStyle(
-                  color: AppColors.foreground,
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Text(
-                rel,
-                style: const TextStyle(
-                  color: AppColors.muted,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-        IconButton(
-          onPressed: state.canGoNext ? state.goNext : null,
-          icon: const Icon(Icons.chevron_right),
-          color: AppColors.foreground,
-          disabledColor: AppColors.border,
-        ),
-      ],
     );
   }
 }
