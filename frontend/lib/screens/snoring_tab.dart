@@ -170,47 +170,42 @@ class SnoringTab extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                children: [
-                  Icon(
-                    isMeasuring ? Icons.mic_rounded : Icons.bedtime_rounded,
-                    color: isMeasuring ? AppColors.pink : AppColors.primary,
-                    size: 30,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              if (isMeasuring)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
-                        Text(
-                          isMeasuring ? '수면 측정 중' : '수면 측정 준비',
-                          style: const TextStyle(
+                        const Icon(
+                          Icons.mic_rounded,
+                          color: AppColors.pink,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 8),
+                        const Text(
+                          '수면 측정 중',
+                          style: TextStyle(
                             color: AppColors.foreground,
                             fontSize: 17,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          isMeasuring
-                              ? '마이크로 코골이와 주변 소음을 측정하고 있습니다.'
-                              : '취침 전 버튼을 누르면 코골이 감지가 시작됩니다.',
-                          style: const TextStyle(
-                            color: AppColors.muted,
-                            fontSize: 13,
-                            height: 1.4,
-                          ),
-                        ),
                       ],
                     ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 24),
-
+                    const SizedBox(height: 6),
+                    const Text(
+                      '코골이와 주변 소음을 측정하고 있어요',
+                      style: TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              if (isMeasuring) const SizedBox(height: 24),
               if (!isMeasuring)
-                // 측정 시작 전: 안내 이미지
+                // 측정 시작 전: 안내 이미지 (제목 없이 바로 표시)
                 Center(
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(20),
@@ -261,9 +256,7 @@ class SnoringTab extends StatelessWidget {
                     ],
                   ),
                 ),
-
               const SizedBox(height: 24),
-
               _TimeRow(
                 icon: Icons.nights_stay_rounded,
                 iconColor: AppColors.primary,
@@ -280,9 +273,7 @@ class SnoringTab extends StatelessWidget {
                 label: '기상 목표',
                 value: state.wakeTarget,
               ),
-
               const SizedBox(height: 24),
-
               SizedBox(
                 height: 56,
                 child: ElevatedButton(
@@ -473,9 +464,7 @@ class SnoringTab extends StatelessWidget {
                 icon: Icons.repeat,
                 label: '발생 횟수',
                 value: '${r.snoreCount}회',
-                sub: r.totalSleepHours <= 0
-                    ? '수면 연동 전'
-                    : '시간당 $countPerHour회',
+                sub: r.totalSleepHours <= 0 ? '수면 연동 전' : '시간당 $countPerHour회',
                 color: AppColors.gold,
               ),
             ),
@@ -569,9 +558,7 @@ class SnoringTab extends StatelessWidget {
 
                               final i = v.toInt();
 
-                              if (i < 0 ||
-                                  i >= timeline.length ||
-                                  i % 3 != 0) {
+                              if (i < 0 || i >= timeline.length || i % 3 != 0) {
                                 return const SizedBox.shrink();
                               }
 
@@ -904,4 +891,3 @@ class _TimeRow extends StatelessWidget {
     );
   }
 }
-
