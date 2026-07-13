@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -19,28 +20,29 @@ from tensorflow.keras import layers
 from keras.models import Sequential
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
-import os
+
+from app.config import MFCC_SIZE, N_FFT, SAMPLE_RATE
 
 def extract_librosa_binary_mfcc(filepath):
 
     signal, sr = librosa.load(
         filepath,
-        sr=None,
+        sr=SAMPLE_RATE,
         mono=True
     )
 
     mfcc = librosa.feature.mfcc(
         y=signal,
         sr=sr,
-        n_mfcc=32,
-        n_fft=512,
+        n_mfcc=MFCC_SIZE,
+        n_fft=N_FFT,
     )
 
     # 길이 맞추기
-    if mfcc.shape[1] < 32:
-        pad = 32 - mfcc.shape[1]
+    if mfcc.shape[1] < MFCC_SIZE:
+        pad = MFCC_SIZE - mfcc.shape[1]
         mfcc = np.pad(mfcc, ((0, 0), (0, pad)), mode="constant")
     else:
-        mfcc = mfcc[:, :32]
+        mfcc = mfcc[:, :MFCC_SIZE]
 
     return mfcc

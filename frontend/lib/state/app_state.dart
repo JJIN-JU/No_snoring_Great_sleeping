@@ -12,10 +12,8 @@ import '../services/snore_classification_service.dart';
 import '../services/snore_measure_service.dart';
 import '../theme.dart';
 
+
 class AppState extends ChangeNotifier {
-  static const double aiSnoringProbabilityThreshold = 0.40;
-  static const double noiseSnoringProbabilityThreshold = 0.50;
-  static const int snoreVoteRequiredCount = 3;
   static const int snoreNotificationCooldownSeconds = 5;
 
   // =========================
@@ -449,17 +447,13 @@ class AppState extends ChangeNotifier {
         save: false,
       );
 
-      final binaryProbability = _toDouble(result['snoring_probability']);
-      final snoringNoiseProbability = _snoringNoiseProbability(result['noise']);
-      final finalProbability = _finalSnoringScore(result);
+      final snoringProbability = _toDouble(result['snoring_probability']);
       final isSnoring = _isAiSnoringResult(result);
       final votesText = _votesText(result);
 
       debugPrint(
         '실시간 5초 조각 AI 판별: ${clip.time} / '
-        '최종확률 ${finalProbability.toStringAsFixed(4)} '
-        '(binary ${binaryProbability.toStringAsFixed(4)}, '
-        'Snoring ${snoringNoiseProbability.toStringAsFixed(4)}) / '
+        '최종확률 ${snoringProbability.toStringAsFixed(4)} '
         '$votesText / '
         '${isSnoring ? '코골이 O' : '코골이 X'}',
       );
@@ -516,9 +510,7 @@ class AppState extends ChangeNotifier {
           save: false,
         );
 
-        final binaryProbability = _toDouble(result['snoring_probability']);
-        final snoringNoiseProbability = _snoringNoiseProbability(result['noise']);
-        final finalProbability = _finalSnoringScore(result);
+        final snoringProbability = _toDouble(result['snoring_probability']);
         final isSnoring = _isAiSnoringResult(result);
         final votesText = _votesText(result);
         final noiseText = _noiseLabelsText(result['noise']);
@@ -528,9 +520,7 @@ class AppState extends ChangeNotifier {
           '${i + 1}. ${clip.time} / ${clip.durationSeconds}초 / '
           '평균 ${clip.avgDb.toStringAsFixed(1)}dB / '
           '최대 ${clip.maxDb.toStringAsFixed(1)}dB / '
-          'AI확률 ${finalProbability.toStringAsFixed(4)} '
-          '(binary ${binaryProbability.toStringAsFixed(4)}, '
-          'Snoring ${snoringNoiseProbability.toStringAsFixed(4)}) / '
+          'AI확률 ${snoringProbability.toStringAsFixed(4)} '
           '$votesText / '
           '판정 $judgmentText / '
           'noise: $noiseText',
@@ -541,7 +531,7 @@ class AppState extends ChangeNotifier {
             _ClassifiedSnoreClip(
               index: i,
               clip: clip,
-              probability: finalProbability,
+              probability: snoringProbability,
             ),
           );
         }
@@ -556,7 +546,7 @@ class AppState extends ChangeNotifier {
     if (detected.isEmpty) {
       snoreAiDebugText = 'AI 판별 결과\n'
           '총 ${rawResult.audioClips.length}개 조각 분석 / 코골이 0개\n'
-          '기준: binary ${aiSnoringProbabilityThreshold.toStringAsFixed(2)} / Snoring ${noiseSnoringProbabilityThreshold.toStringAsFixed(2)} / 1초투표 ${snoreVoteRequiredCount}개 이상\n\n'
+          '백엔드 AI 판정 결과\n\n'
           '${debugLines.join('\n')}';
 
       if (lastError != null) {
@@ -590,7 +580,7 @@ class AppState extends ChangeNotifier {
     snoreAiDebugText = 'AI 판별 결과\n'
         '총 ${rawResult.audioClips.length}개 조각 분석 / '
         '코골이 ${detected.length}개 / 화면 표시 TOP ${selected.length}개\n'
-        '기준: binary ${aiSnoringProbabilityThreshold.toStringAsFixed(2)} / Snoring ${noiseSnoringProbabilityThreshold.toStringAsFixed(2)} / 1초투표 ${snoreVoteRequiredCount}개 이상\n\n'
+        '백엔드 AI 판정 결과\n\n'
         '${debugLines.join('\n')}';
 
     await _deleteUnselectedLocalClips(
@@ -713,61 +703,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  String _noiseLabelsText(dynamic noise) {
-    if (noise is! List || noise.isEmpty) {
-      return '-';
-    }
-
-    final labels = <String>[];
-
-    for (final item in noise) {
-      if (item is Map) {
-        final label = item['label']?.toString();
-        final probability = _toDouble(item['probability']);
-
-        if (label != null && label.isNotEmpty) {
-          labels.add('$label(${probability.toStringAsFixed(3)})');
-        }
-      }
-    }
-
-    if (labels.isEmpty) {
-      return '-';
-    }
-
-    return labels.join(', ');
-  }
-
-  double _snoringNoiseProbability(dynamic noise) {
-    if (noise is! List) {
-      return 0;
-    }
-
-    var maxProbability = 0.0;
-
-    for (final item in noise) {
-      if (item is Map) {
-        final label = item['label']?.toString().toLowerCase();
-        final probability = _toDouble(item['probability']);
-
-        if (label == 'snoring' && probability > maxProbability) {
-          maxProbability = probability;
-        }
-      }
-    }
-
-    return maxProbability;
-  }
-
-  double _finalSnoringScore(Map<String, dynamic> result) {
-    final binaryProbability = _toDouble(result['snoring_probability']);
-    final snoringNoiseProbability = _snoringNoiseProbability(result['noise']);
-
-    return binaryProbability > snoringNoiseProbability
-        ? binaryProbability
-        : snoringNoiseProbability;
-  }
-
   int _snoringVoteCount(Map<String, dynamic> result) {
     final rawVoteCount = result['snore_count'] ?? result['snoring_vote_count'];
 
@@ -785,7 +720,7 @@ class AppState extends ChangeNotifier {
       return rawRequired;
     }
 
-    return int.tryParse(rawRequired?.toString() ?? '') ?? snoreVoteRequiredCount;
+    return int.tryParse(rawRequired?.toString() ?? '') ?? 3; // vote 기준
   }
 
   int _snoringTotalChunks(Map<String, dynamic> result) {
@@ -828,7 +763,7 @@ class AppState extends ChangeNotifier {
 
     _lastSnoreNotificationAt = now;
 
-    final percentText = (_finalSnoringScore(result) * 100).toStringAsFixed(1);
+    final percentText = (_toDouble(result['snoring_probability']) * 100).toStringAsFixed(1);
     final votesText = _votesText(result);
 
     try {
@@ -844,29 +779,32 @@ class AppState extends ChangeNotifier {
   }
 
   bool _isAiSnoringResult(Map<String, dynamic> result) {
-    if (result['snoring_detected'] == true) {
-      return true;
+    return result["snoring"] == true;
+  }
+
+  String _noiseLabelsText(dynamic noise) {
+    if (noise is! List || noise.isEmpty) {
+      return '-';
     }
 
-    if (result['snoring'] == true) {
-      return true;
+    final labels = <String>[];
+
+    for (final item in noise) {
+      if (item is Map) {
+        final label = item['label']?.toString();
+        final probability = _toDouble(item['probability']);
+
+        if (label != null && label.isNotEmpty) {
+          labels.add('$label(${probability.toStringAsFixed(3)})');
+        }
+      }
     }
 
-    final totalChunks = _snoringTotalChunks(result);
-
-    if (totalChunks > 0) {
-      return _snoringVoteCount(result) >= _snoringRequiredVotes(result);
+    if (labels.isEmpty) {
+      return '-';
     }
 
-    final binaryProbability = _toDouble(result['snoring_probability']);
-
-    if (binaryProbability >= aiSnoringProbabilityThreshold) {
-      return true;
-    }
-
-    final snoringNoiseProbability = _snoringNoiseProbability(result['noise']);
-
-    return snoringNoiseProbability >= noiseSnoringProbabilityThreshold;
+    return labels.join(', ');
   }
 
   double _toDouble(dynamic value) {

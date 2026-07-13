@@ -7,7 +7,12 @@ import tempfile
 import os
 
 from pydub import AudioSegment #pydub 설치 필요
-
+from app.config import (
+    WINDOW_SECONDS,
+    SEGMENT_SECONDS,
+    SEGMENT_THRESHOLD,
+    VOTE_THRESHOLD,
+)
 
 def split_audio(filepath: str):
 
@@ -17,9 +22,9 @@ def split_audio(filepath: str):
 
     segment_paths = []
 
-    for i in range(5):
+    for i in range(WINDOW_SECONDS):
 
-        start = i * 1000
+        start = start = i * SEGMENT_SECONDS * 1000
         end = (i + 1) * 1000
 
         segment = audio[start:end]
@@ -69,9 +74,9 @@ def predict(filepath: str):
     probabilities = predict_batch(batch)
 
     # 4. Voting
-    snore_count = int(np.sum(probabilities >= 0.5))
+    snore_count = int(np.sum(probabilities >= SEGMENT_THRESHOLD))
 
-    is_snoring = snore_count >= 3
+    is_snoring = snore_count >= VOTE_THRESHOLD
 
     return {
         "snoring": is_snoring,
