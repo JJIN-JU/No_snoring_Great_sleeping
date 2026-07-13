@@ -144,7 +144,6 @@ No_snoring_Great_sleeping/
 ├──docker-compose.yml
 ├──Jenkinsfile
 └──README.md
-...
 ```
 
 ---
