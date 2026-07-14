@@ -5,10 +5,9 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
-class AIService {
-  static const String baseUrl =
-      "https://lets-literally-communicate-say.trycloudflare.com";
+import '../config.dart';
 
+class AIService {
   Future<Map<String, dynamic>> predict({
     required String userId,
     required File wavFile,
@@ -16,7 +15,7 @@ class AIService {
   }) async {
     final request = http.MultipartRequest(
       "POST",
-      Uri.parse("$baseUrl/predict"),
+      Uri.parse("${AppConfig.baseUrl}/predict"),
     );
 
     request.fields["user_id"] = userId;
