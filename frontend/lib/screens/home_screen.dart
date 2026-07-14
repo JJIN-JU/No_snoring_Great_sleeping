@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/kakao_profile_sheet.dart';
+import 'explore_screen.dart';
 import 'sleep_tab.dart';
 import 'snoring_tab.dart';
 import 'stats_tab.dart';
@@ -46,10 +48,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final titles = ['수면', '코골이', '통계'];
+    final titles = ['수면', '탐색', '코골이', '통계'];
 
     final tabs = [
       SleepTab(state: widget.state),
+      const ExploreScreen(),
       SnoringTab(state: widget.state),
       StatsTab(state: widget.state),
     ];
@@ -134,6 +137,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: AppColors.primary,
               ),
               label: '수면',
+            ),
+            NavigationDestination(
+              icon: Icon(
+                Icons.explore_outlined,
+                color: AppColors.muted,
+              ),
+              selectedIcon: Icon(
+                Icons.explore,
+                color: AppColors.primary,
+              ),
+              label: '탐색',
             ),
             NavigationDestination(
               icon: Icon(

@@ -47,10 +47,14 @@ class AppState extends ChangeNotifier {
   // =========================
 
   bool measuring = false;
+  bool _stoppingMeasurement = false;
   Duration measuredElapsed = Duration.zero;
 
   DateTime? _measureStartedAt;
   Timer? _timer;
+
+  /// 측정 종료/저장 중에 늦게 도착하는 타이머·AI 응답을 버리기 위한 토큰.
+  int _measureSessionToken = 0;
 
   final SnoreMeasureService _snoreMeasureService = SnoreMeasureService();
 
@@ -59,6 +63,7 @@ class AppState extends ChangeNotifier {
 
   DateTime? _lastSnoreNotificationAt;
 
+  bool get stoppingMeasurement => _stoppingMeasurement;
   bool get snoreRecording => _snoreMeasureService.isRunning;
 
   // =========================
@@ -366,67 +371,128 @@ class AppState extends ChangeNotifier {
   // =========================
 
   Future<void> startMeasuring() async {
-    if (measuring) return;
+    if (measuring || _stoppingMeasurement) return;
+
+    final int token = ++_measureSessionToken;
 
     try {
       snoreError = null;
       snoreAiDebugText = null;
       _lastSnoreNotificationAt = null;
 
-      await _snoreMeasureService.start(
-        onClipReady: _classifyClipAndNotifyDuringMeasurement,
-      );
-
       measuring = true;
+      _stoppingMeasurement = false;
       measuredElapsed = Duration.zero;
       _measureStartedAt = DateTime.now();
 
-      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (_measureStartedAt == null) return;
+      _timer?.cancel();
+      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!measuring ||
+            _stoppingMeasurement ||
+            token != _measureSessionToken ||
+            _measureStartedAt == null) {
+          timer.cancel();
+          return;
+        }
 
         measuredElapsed = DateTime.now().difference(_measureStartedAt!);
         notifyListeners();
       });
 
       notifyListeners();
-    } catch (e) {
-      snoreError = e.toString();
-      measuring = false;
-      measuredElapsed = Duration.zero;
-      _measureStartedAt = null;
+
+      await _snoreMeasureService.start(
+        onClipReady: (clip) {
+          return _classifyClipAndNotifyDuringMeasurement(
+            clip,
+            token,
+          );
+        },
+      );
+
+      // start()를 기다리는 사이 종료/새 측정이 발생했다면 현재 시작 요청은 폐기한다.
+      if (token != _measureSessionToken || !measuring || _stoppingMeasurement) {
+        return;
+      }
+
       notifyListeners();
+    } catch (e) {
+      if (token == _measureSessionToken) {
+        snoreError = e.toString();
+        measuring = false;
+        _stoppingMeasurement = false;
+        measuredElapsed = Duration.zero;
+        _measureStartedAt = null;
+
+        _timer?.cancel();
+        _timer = null;
+
+        notifyListeners();
+      }
     }
   }
 
   Future<void> stopMeasuring() async {
-    if (!measuring) return;
+    if (_stoppingMeasurement) return;
+    if (!measuring && !_snoreMeasureService.isRunning) return;
+
+    final DateTime? stoppedStartedAt = _measureStartedAt;
+
+    // 먼저 측정을 완전히 끊는다. 저장/AI 최종 판별은 그 다음에 한다.
+    _stoppingMeasurement = true;
+    measuring = false;
+
+    // 이미 날아간 실시간 AI 요청이 늦게 돌아와도 결과/알림을 추가하지 못하게 무효화.
+    _measureSessionToken++;
 
     _timer?.cancel();
     _timer = null;
 
-    final rawSnoreResult = await _snoreMeasureService.stop();
+    notifyListeners();
 
-    measuring = false;
-    measuredElapsed = Duration.zero;
+    SnoreMeasureResult rawSnoreResult;
 
-    final snoreResult = await _classifyTop5SnoreClips(rawSnoreResult);
-
-    if (_records.isNotEmpty) {
-      updateTodaySnoreData(snoreResult);
-    } else {
-      _addSnoreOnlyRecord(snoreResult);
+    try {
+      rawSnoreResult = await _snoreMeasureService.stop();
+    } catch (e) {
+      snoreError = '측정 종료 실패: $e';
+      _stoppingMeasurement = false;
+      measuredElapsed = Duration.zero;
+      _measureStartedAt = null;
+      notifyListeners();
+      return;
     }
 
-    selectedIndex = 0;
-    _measureStartedAt = null;
+    try {
+      final snoreResult = await _classifyTop5SnoreClips(rawSnoreResult);
 
-    notifyListeners();
+      if (_records.isNotEmpty) {
+        updateTodaySnoreData(snoreResult);
+      } else {
+        _addSnoreOnlyRecord(
+          snoreResult,
+          startedAtOverride: stoppedStartedAt,
+        );
+      }
+
+      selectedIndex = 0;
+      measuredElapsed = Duration.zero;
+      _measureStartedAt = null;
+    } catch (e) {
+      snoreError = '측정 결과 저장/AI 판별 실패: $e';
+    } finally {
+      _stoppingMeasurement = false;
+      notifyListeners();
+    }
   }
 
   Future<void> _classifyClipAndNotifyDuringMeasurement(
     SnoreAudioClip clip,
+    int token,
   ) async {
-    if (!measuring) return;
+    if (!measuring || _stoppingMeasurement || token != _measureSessionToken) {
+      return;
+    }
 
     if (userId == null || userId!.isEmpty) {
       debugPrint('실시간 코골이 AI 판별 생략: userId 없음');
@@ -438,6 +504,10 @@ class AppState extends ChangeNotifier {
 
       if (!await file.exists()) {
         debugPrint('실시간 코골이 AI 판별 생략: 파일 없음 ${clip.path}');
+        return;
+      }
+
+      if (!measuring || _stoppingMeasurement || token != _measureSessionToken) {
         return;
       }
 
@@ -462,6 +532,10 @@ class AppState extends ChangeNotifier {
         await _notifySnoringIfNeeded(result);
       }
     } catch (e) {
+      if (!measuring || _stoppingMeasurement || token != _measureSessionToken) {
+        return;
+      }
+
       debugPrint('실시간 코골이 AI 판별 실패: $e');
     }
   }
@@ -515,9 +589,10 @@ class AppState extends ChangeNotifier {
         final votesText = _votesText(result);
         final noiseText = _noiseLabelsText(result['noise']);
         final judgmentText = isSnoring ? '코골이 O' : '코골이 X';
+        final aiWindowSeconds = _aiDisplayDurationSeconds(clip);
 
         debugLines.add(
-          '${i + 1}. ${clip.time} / ${clip.durationSeconds}초 / '
+          '${i + 1}. ${clip.time} / AI ${aiWindowSeconds}초 / '
           '평균 ${clip.avgDb.toStringAsFixed(1)}dB / '
           '최대 ${clip.maxDb.toStringAsFixed(1)}dB / '
           'AI확률 ${snoringProbability.toStringAsFixed(4)} '
@@ -538,7 +613,7 @@ class AppState extends ChangeNotifier {
       } catch (e) {
         lastError = e;
         debugLines.add(
-          '${i + 1}. ${clip.time} / ${clip.durationSeconds}초 / AI 호출 실패: $e',
+          '${i + 1}. ${clip.time} / AI ${_aiDisplayDurationSeconds(clip)}초 / AI 호출 실패: $e',
         );
       }
     }
@@ -619,6 +694,18 @@ class AppState extends ChangeNotifier {
     );
   }
 
+  int _aiDisplayDurationSeconds(SnoreAudioClip clip) {
+    final seconds = clip.durationSeconds;
+
+    if (seconds <= 0) {
+      return 0;
+    }
+
+    // AI 모델은 5초 파일을 1초 단위 5개로 투표하므로,
+    // 화면/통계에는 AI 판별 창 길이를 최대 5초로 표시한다.
+    return seconds > 5 ? 5 : seconds;
+  }
+
   SnoreMeasureResult _buildResultWithAiClips({
     required SnoreMeasureResult rawResult,
     required List<SnoreAudioClip> aiDetectedClips,
@@ -653,7 +740,7 @@ class AppState extends ChangeNotifier {
 
     final totalSeconds = aiDetectedClips.fold<int>(
       0,
-      (sum, clip) => sum + clip.durationSeconds,
+      (sum, clip) => sum + _aiDisplayDurationSeconds(clip),
     );
 
     return SnoreMeasureResult(
@@ -814,8 +901,11 @@ class AppState extends ChangeNotifier {
     return 0;
   }
 
-  void _addSnoreOnlyRecord(SnoreMeasureResult snoreResult) {
-    final start = _measureStartedAt ?? DateTime.now();
+  void _addSnoreOnlyRecord(
+    SnoreMeasureResult snoreResult, {
+    DateTime? startedAtOverride,
+  }) {
+    final start = startedAtOverride ?? _measureStartedAt ?? DateTime.now();
     final end = DateTime.now();
 
     final timeline = snoreResult.snoreTimeline.isEmpty
@@ -966,6 +1056,10 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _measureSessionToken++;
+    measuring = false;
+    _stoppingMeasurement = false;
+
     _timer?.cancel();
     _snoreMeasureService.cancel();
     super.dispose();

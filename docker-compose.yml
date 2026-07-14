@@ -6,20 +6,6 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_URI=mongodb+srv://zzcare_admin:Zzcare2026Secure@cluster0.zjfudsg.mongodb.net/?appName=Cluster0
       - MONGO_DB=zzcare_db
-    depends_on:
-      - mongo
     restart: always
-
-  mongo:
-    image: mongo:7
-    container_name: no_snoring_mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-    restart: always
-
-volumes:
-  mongo_data:

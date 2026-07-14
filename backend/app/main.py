@@ -29,7 +29,6 @@ from app.database import (
     daily_stats,
     snore_audio_fs,
 )
-from app.snore_detector import predict
 from app.realtime_manager import realtime_manager
 from app.config import SNORE_ALERT_COOLDOWN_SECONDS
 
@@ -558,19 +557,20 @@ def get_users():
 async def predict_audio(
     user_id: str = Form(...),
     timestamp: Optional[str] = Form(None),
+    save: bool = Form(True),
     file: UploadFile = File(...)
 ):
-
     temp_path = None
 
     try:
+        now = datetime.now(timezone.utc)
+        timestamp_value = timestamp or now.isoformat()
 
         # 업로드한 wav를 임시 저장
         with tempfile.NamedTemporaryFile(
             delete=False,
             suffix=".wav"
         ) as temp:
-
             temp.write(await file.read())
             temp_path = temp.name
 
@@ -579,38 +579,35 @@ async def predict_audio(
         result = normalize_detector_result(raw_result)
 
         # 코골이 또는 잡음이 있는 경우만 저장
-        if result["snoring"] or result["has_noise"]:
-
+        # 실시간 판별(save=false)은 DB 저장 없이 응답만 반환
+        if save and (result["snoring"] or result["has_noise"]):
             snore_events.insert_one({
-
                 "user_id": user_id,
-
-                "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
-
+                "timestamp": timestamp_value,
                 "snoring": result["snoring"],
-
-                "created_at": datetime.now(timezone.utc).isoformat(),
-
+                "created_at": now.isoformat(),
                 "snoring_probability": result["snoring_probability"],
-
                 "has_noise": result["has_noise"],
-
-                "noise": result["noise"]
-
+                "noise": result["noise"],
+                "snore_count": result.get("snore_count"),
+                "segment_count": result.get("segment_count"),
+                "vote_required": result.get("vote_required"),
+                "segment_probability": result.get("segment_probability", []),
+                "segments": result.get("segments", []),
             })
 
         return {
             **result,
-            "timestamp": timestamp or now}
-            
-    except Exception as e:
+            "timestamp": timestamp_value,
+        }
 
+    except Exception as e:
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=str(e)
         )
 
     finally:
-
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)

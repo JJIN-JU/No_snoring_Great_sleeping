@@ -30,3 +30,12 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+# IntelliJ / Android Studio
+.idea/
+
+# Python venv
+backend/venv/
+
+# Local debug certificate
+frontend/debug_cert.der
