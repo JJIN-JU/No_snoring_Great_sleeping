@@ -6,42 +6,22 @@ from tensorflow.keras.models import load_model
 
 from app.feature import extract_librosa_binary_mfcc
 
-# ========= 모델 경로 =========
-BASE_DIR = Path(__file__).resolve().parent.parent
-MODEL_DIR = BASE_DIR / "models"
+from app.config import (
+    MODEL_DIR,
+    BINARY_MODEL_NAME,
+    MULTILABEL_MODEL_NAME,
+    LABELS,
+    BINARY_THRESHOLD,
+    MULTI_THRESHOLDS,
+)
 
-# =========모델 로드=========
-binary_model = load_model(MODEL_DIR / "librosa_binary_baseline.keras")
-multilabel_model = load_model(MODEL_DIR / "librosa_binary_adam_multi.keras")
+binary_model = load_model(
+    MODEL_DIR / BINARY_MODEL_NAME
+)
 
-# ========= LABEL =========
-LABELS = [
-    "Snoring",
-    "Baby",
-    "Door",
-    "Environmental",
-    "Etc",
-    "Toilet",
-    "VoiceTV",
-    "Vehicles",
-    "Vibration",
-    "WhiteNoise",
-]
-# =========Threshold=========
-BINARY_THRESHOLD = 0.50
-MULTI_THRESHOLDS = {
-    "Snoring": 0.50,
-    "Baby": 0.32,
-    "Door": 0.16,
-    "Environmental": 0.50,
-    "Etc": 0.50,
-    "Toilet": 0.50,
-    "VoiceTV": 0.88,
-    "Vehicles": 0.50,
-    "Vibration": 0.50,
-    "WhiteNoise": 0.53,
-}
-
+multilabel_model = load_model(
+    MODEL_DIR / MULTILABEL_MODEL_NAME
+)
 
 def prepare_mfcc_for_model(mfcc) -> np.ndarray:
 

@@ -30,7 +30,7 @@ from app.database import (
     snore_audio_fs,
 )
 from app.realtime_manager import realtime_manager
-
+from app.config import SNORE_ALERT_COOLDOWN_SECONDS
 
 app = FastAPI(
     title="ZZCare API",
@@ -52,7 +52,6 @@ app.add_middleware(
 # =========================
 
 last_snore_alert_time = 0
-SNORE_ALERT_COOLDOWN_SECONDS = 30
 
 latest_snore_alert_id = 0
 latest_snore_alert = None
