@@ -12,9 +12,12 @@ import '../services/snore_classification_service.dart';
 import '../services/snore_measure_service.dart';
 import '../theme.dart';
 
-
 class AppState extends ChangeNotifier {
   static const int snoreNotificationCooldownSeconds = 5;
+
+  AppState() {
+    _ensureTodayRecordExists();
+  }
 
   // =========================
   // 로그인 상태
@@ -86,7 +89,7 @@ class AppState extends ChangeNotifier {
 
   SleepRecord get current {
     if (_records.isEmpty) {
-      return _emptyRecord();
+      return _emptyRecordForDate(DateTime.now());
     }
 
     if (selectedIndex < 0) {
@@ -332,6 +335,8 @@ class AppState extends ChangeNotifier {
         ..clear()
         ..addAll(newRecords);
 
+      _ensureTodayRecordExists();
+
       selectedIndex = 0;
       lastHealthSyncAt = DateTime.now();
     } catch (e) {
@@ -474,6 +479,8 @@ class AppState extends ChangeNotifier {
           startedAtOverride: stoppedStartedAt,
         );
       }
+
+      _ensureTodayRecordExists();
 
       selectedIndex = 0;
       measuredElapsed = Duration.zero;
@@ -801,7 +808,8 @@ class AppState extends ChangeNotifier {
   }
 
   int _snoringRequiredVotes(Map<String, dynamic> result) {
-    final rawRequired = result['vote_required'] ?? result['snoring_required_votes'];
+    final rawRequired =
+        result['vote_required'] ?? result['snoring_required_votes'];
 
     if (rawRequired is int) {
       return rawRequired;
@@ -850,7 +858,8 @@ class AppState extends ChangeNotifier {
 
     _lastSnoreNotificationAt = now;
 
-    final percentText = (_toDouble(result['snoring_probability']) * 100).toStringAsFixed(1);
+    final percentText =
+        (_toDouble(result['snoring_probability']) * 100).toStringAsFixed(1);
     final votesText = _votesText(result);
 
     try {
@@ -978,6 +987,39 @@ class AppState extends ChangeNotifier {
 
   static String _dateKey(DateTime d) => '${d.year}-${d.month}-${d.day}';
 
+  void _ensureTodayRecordExists() {
+    final todayKey = _dateKey(DateTime.now());
+
+    final hasToday = _records.any((r) => _dateKey(r.date) == todayKey);
+
+    if (!hasToday) {
+      _records.insert(0, _emptyRecordForDate(DateTime.now()));
+      selectedIndex = 0;
+    }
+  }
+
+  SleepRecord _emptyRecordForDate(DateTime date) {
+    return SleepRecord(
+      date: date,
+      score: 0,
+      bedtimeTarget: bedtimeTarget,
+      wakeTarget: wakeTarget,
+      bedtimeActual: '--:--',
+      wakeActual: '--:--',
+      totalSleepHours: 0,
+      targetSleepHours: _parseHours(bedtimeTarget, wakeTarget),
+      avgSnoreDb: 0,
+      maxSnoreDb: 0,
+      snoreHours: 0,
+      snoreFreqHz: 0,
+      snoreCount: 0,
+      noiseDb: 0,
+      stages: const [],
+      snoreTimeline: const [],
+      snoreAudioClips: const [],
+    );
+  }
+
   static Color _stageColor(String name) {
     if (name.contains('깊')) return AppColors.primary;
     if (name.contains('REM') || name.contains('렘')) return AppColors.accent;
@@ -1076,34 +1118,6 @@ class _ClassifiedSnoreClip {
     required this.clip,
     required this.probability,
   });
-}
-
-// =========================
-// 빈 기록
-// =========================
-
-SleepRecord _emptyRecord() {
-  final now = DateTime.now();
-
-  return SleepRecord(
-    date: now,
-    score: 0,
-    bedtimeTarget: '23:30',
-    wakeTarget: '07:00',
-    bedtimeActual: '--:--',
-    wakeActual: '--:--',
-    totalSleepHours: 0,
-    targetSleepHours: 7.5,
-    avgSnoreDb: 0,
-    maxSnoreDb: 0,
-    snoreHours: 0,
-    snoreFreqHz: 0,
-    snoreCount: 0,
-    noiseDb: 0,
-    stages: const [],
-    snoreTimeline: const [],
-    snoreAudioClips: const [],
-  );
 }
 
 // =========================

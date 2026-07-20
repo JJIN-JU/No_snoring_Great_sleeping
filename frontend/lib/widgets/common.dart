@@ -124,12 +124,6 @@ class DateHeader extends StatelessWidget {
     final d = state.current.date;
     final label = DateFormat('M월 d일 (E)', 'ko').format(d);
 
-    final rel = state.selectedIndex == 0
-        ? '오늘'
-        : state.selectedIndex == 1
-            ? '어제'
-            : '${state.selectedIndex}일 전';
-
     return Row(
       children: [
         IconButton(
@@ -139,24 +133,14 @@ class DateHeader extends StatelessWidget {
           disabledColor: AppColors.border,
         ),
         Expanded(
-          child: Column(
-            children: [
-              Text(
-                label,
-                style: const TextStyle(
-                  color: AppColors.foreground,
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Text(
-                rel,
-                style: const TextStyle(
-                  color: AppColors.muted,
-                  fontSize: 12,
-                ),
-              ),
-            ],
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: AppColors.foreground,
+              fontSize: 17,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
         IconButton(
