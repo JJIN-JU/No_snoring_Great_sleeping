@@ -21,13 +21,13 @@ from keras.models import Sequential
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 
-from app.config import MFCC_SIZE, N_FFT, SAMPLE_RATE
+from app.config import MFCC_SIZE, N_FFT
 
 def extract_librosa_binary_mfcc(filepath):
 
     signal, sr = librosa.load(
         filepath,
-        sr=SAMPLE_RATE,
+        sr=44100,
         mono=True
     )
 

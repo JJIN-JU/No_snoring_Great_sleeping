@@ -24,6 +24,7 @@ dependencies:
   flutter_local_notifications: ^18.0.1
   vibration: ^3.2.0
   url_launcher: ^6.3.2
+  file_picker: ^10.3.10
   
 
 dev_dependencies:

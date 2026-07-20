@@ -12,7 +12,7 @@ UPLOAD_DIR = BASE_DIR / "uploads"
 # Model Files
 # ==========================================
 
-BINARY_MODEL_NAME = "librosa_binary_trial.keras"
+BINARY_MODEL_NAME = "librosa_binary_trial_2.keras"
 MULTILABEL_MODEL_NAME = "librosa_binary_adam_multi.keras"
 
 # ==========================================
@@ -20,7 +20,7 @@ MULTILABEL_MODEL_NAME = "librosa_binary_adam_multi.keras"
 # ==========================================
 
 SEGMENT_SECONDS = 1
-WINDOW_SECONDS = 5
+WINDOW_SECONDS = 3
 SAMPLE_RATE = None
 
 # ==========================================
@@ -36,7 +36,7 @@ N_FFT = 512
 
 BINARY_THRESHOLD = 0.50
 SEGMENT_THRESHOLD = 0.50
-VOTE_THRESHOLD = 3
+VOTE_THRESHOLD = 2
 
 MULTI_THRESHOLDS = {
     "Snoring": 0.50,

@@ -540,8 +540,9 @@ class AppState extends ChangeNotifier {
         save: false,
       );
 
-      final snoringProbability = _toDouble(result['snoring_probability']);
+      final snoringProbability = _snoringDisplayProbability(result);
       final isSnoring = _isAiSnoringResult(result);
+      
       final votesText = _votesText(result);
 
       debugPrint(
@@ -607,7 +608,7 @@ class AppState extends ChangeNotifier {
           save: false,
         );
 
-        final snoringProbability = _toDouble(result['snoring_probability']);
+        final snoringProbability = _snoringDisplayProbability(result);
         final isSnoring = _isAiSnoringResult(result);
         final votesText = _votesText(result);
         final noiseText = _noiseLabelsText(result['noise']);
@@ -875,7 +876,7 @@ class AppState extends ChangeNotifier {
     _lastSnoreNotificationAt = now;
 
     final percentText =
-        (_toDouble(result['snoring_probability']) * 100).toStringAsFixed(1);
+        (_snoringDisplayProbability(result) * 100).toStringAsFixed(1);
     final votesText = _votesText(result);
 
     try {
@@ -890,8 +891,23 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  bool _isAiSnoringResult(Map<String, dynamic> result) {
+  /*bool _isAiSnoringResult(Map<String, dynamic> result) {
     return result["snoring"] == true;
+  }*/
+  bool _isAiSnoringResult(Map<String, dynamic> result) {
+    if (result.containsKey('snoring_detected')) {
+      return result['snoring_detected'] == true;
+    }
+
+    return result['snoring'] == true;
+  }
+
+  double _snoringDisplayProbability(Map<String, dynamic> result) {
+    if (result.containsKey('avg_snoring_probability')) {
+      return _toDouble(result['avg_snoring_probability']);
+    }
+
+    return _toDouble(result['snoring_probability']);
   }
 
   String _noiseLabelsText(dynamic noise) {

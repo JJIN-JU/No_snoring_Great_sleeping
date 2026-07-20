@@ -434,33 +434,28 @@ class _StatsTabState extends State<StatsTab> {
     );
   }
 
-  Widget _apneaChart(
-    List<ApneaRiskSummary> recs,
-  ) {
-    final labels = recs
-        .map(
-          (r) => DateFormat('E', 'ko').format(r.date),
-        )
-        .toList();
+  Widget _apneaChart(List<ApneaRiskSummary> recs) {
+    final labels =
+        recs.map((r) => DateFormat('E', 'ko').format(r.date)).toList();
 
-    final spo2Values = recs
-        .map(
-          (r) => r.avgSpO2 ?? 0,
-        )
-        .toList();
+    final spo2Values = recs.map((r) {
+      final value = r.avgSpO2 ?? 0;
+
+      if (value.isNaN || value.isInfinite) {
+        return 0.0;
+      }
+
+      return value.clamp(80.0, 100.0).toDouble();
+    }).toList();
 
     return LineChart(
       LineChartData(
         minY: 80,
         maxY: 100,
+        clipData: const FlClipData.all(),
         gridData: _grid(5),
-        titlesData: _titles(
-          labels,
-          5,
-        ),
-        borderData: FlBorderData(
-          show: false,
-        ),
+        titlesData: _titles(labels, 5),
+        borderData: FlBorderData(show: false),
         lineBarsData: [
           LineChartBarData(
             spots: [
@@ -471,19 +466,17 @@ class _StatsTabState extends State<StatsTab> {
                     spo2Values[i],
                   ),
             ],
-            isCurved: true,
+
+            // 곡선이 차트 밖으로 휘는 현상 방지
+            isCurved: false,
+
             color: AppColors.accent,
             barWidth: 3,
             dotData: FlDotData(
               show: true,
-              getDotPainter: (
-                spot,
-                _,
-                __,
-                ___,
-              ) {
-                final isLow = spot.y <
-                    HealthConnectService.lowSpO2Threshold;
+              getDotPainter: (spot, _, __, ___) {
+                final isLow =
+                    spot.y < HealthConnectService.lowSpO2Threshold;
 
                 return FlDotCirclePainter(
                   radius: isLow ? 5 : 3,
@@ -496,9 +489,7 @@ class _StatsTabState extends State<StatsTab> {
             ),
             belowBarData: BarAreaData(
               show: true,
-              color: AppColors.accent.withValues(
-                alpha: 0.12,
-              ),
+              color: AppColors.accent.withValues(alpha: 0.12),
             ),
           ),
         ],
