@@ -34,6 +34,7 @@ class ApneaRiskSummary {
   final double? minSpO2;
   final int lowSpO2Events; // 기준치 미만으로 떨어진 측정 횟수
   final double? avgRespiratoryRate;
+  final double? avgHeartRate;
   final bool hasData;
 
   const ApneaRiskSummary({
@@ -42,6 +43,7 @@ class ApneaRiskSummary {
     required this.minSpO2,
     required this.lowSpO2Events,
     required this.avgRespiratoryRate,
+    required this.avgHeartRate,
     required this.hasData,
   });
 
@@ -52,6 +54,7 @@ class ApneaRiskSummary {
       minSpO2: null,
       lowSpO2Events: 0,
       avgRespiratoryRate: null,
+      avgHeartRate: null,
       hasData: false,
     );
   }
@@ -80,6 +83,7 @@ class HealthConnectService {
   final List<HealthDataType> _apneaTypes = const [
     HealthDataType.BLOOD_OXYGEN,
     HealthDataType.RESPIRATORY_RATE,
+    HealthDataType.HEART_RATE,
   ];
 
   /// 낮은 산소포화도로 간주하는 기준값 (참고용, 임상 기준 아님).
@@ -252,6 +256,7 @@ class HealthConnectService {
   ) {
     final spo2Values = <double>[];
     final respRateValues = <double>[];
+    final heartRateValues = <double>[];
 
     for (final point in points) {
       final value = point.value;
@@ -264,10 +269,14 @@ class HealthConnectService {
         spo2Values.add(numeric);
       } else if (point.type == HealthDataType.RESPIRATORY_RATE) {
         respRateValues.add(numeric);
+      } else if (point.type == HealthDataType.HEART_RATE) {
+        heartRateValues.add(numeric);
       }
     }
 
-    if (spo2Values.isEmpty && respRateValues.isEmpty) {
+    if (spo2Values.isEmpty &&
+        respRateValues.isEmpty &&
+        heartRateValues.isEmpty) {
       return ApneaRiskSummary.empty(date);
     }
 
@@ -288,12 +297,20 @@ class HealthConnectService {
           respRateValues.reduce((a, b) => a + b) / respRateValues.length;
     }
 
+    double? avgHeartRate;
+
+    if (heartRateValues.isNotEmpty) {
+      avgHeartRate =
+          heartRateValues.reduce((a, b) => a + b) / heartRateValues.length;
+    }
+
     return ApneaRiskSummary(
       date: date,
       avgSpO2: avgSpO2,
       minSpO2: minSpO2,
       lowSpO2Events: lowSpO2Events,
       avgRespiratoryRate: avgRespRate,
+      avgHeartRate: avgHeartRate,
       hasData: true,
     );
   }

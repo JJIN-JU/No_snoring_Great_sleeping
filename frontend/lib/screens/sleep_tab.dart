@@ -20,9 +20,10 @@ class SleepTab extends StatelessWidget {
     return '주의 필요';
   }
 
-  String _respRateSubText(double avgRate) {
-    if (avgRate >= 12 && avgRate <= 20) return '정상 범위';
-    if (avgRate < 12) return '느린 편';
+  String _heartRateSubText(double avgRate) {
+    // 성인 수면 중 평균 심박수 참고 범위 (일반적인 안정시 심박수 기준)
+    if (avgRate >= 40 && avgRate <= 60) return '정상 범위';
+    if (avgRate < 40) return '느린 편';
     return '빠른 편';
   }
 
@@ -198,13 +199,13 @@ class SleepTab extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: StatCard(
-                icon: Icons.air_rounded,
-                label: '평균 호흡수',
-                value: hasApneaData && todayApnea!.avgRespiratoryRate != null
-                    ? '${todayApnea.avgRespiratoryRate!.round()}회/분'
-                    : '--회/분',
-                sub: hasApneaData && todayApnea!.avgRespiratoryRate != null
-                    ? _respRateSubText(todayApnea.avgRespiratoryRate!)
+                icon: Icons.favorite_rounded,
+                label: '평균 심박수',
+                value: hasApneaData && todayApnea!.avgHeartRate != null
+                    ? '${todayApnea.avgHeartRate!.round()}bpm'
+                    : '--bpm',
+                sub: hasApneaData && todayApnea!.avgHeartRate != null
+                    ? _heartRateSubText(todayApnea.avgHeartRate!)
                     : '워치 연동 필요',
                 color: AppColors.primary,
               ),

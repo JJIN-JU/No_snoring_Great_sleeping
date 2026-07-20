@@ -271,7 +271,23 @@ class AppState extends ChangeNotifier {
 
     try {
       final service = HealthConnectService();
-      final history = await service.fetchSleepHistory(nights: nights);
+      final rawHistory = await service.fetchSleepHistory(nights: nights);
+
+      // 같은 날짜에 여러 수면 세션(낮잠 + 밤잠 등)이 있으면
+      // 가장 긴 세션만 그 날짜의 대표 수면 기록으로 사용한다.
+      final Map<String, dynamic> longestPerDate = {};
+
+      for (final result in rawHistory) {
+        final key = _dateKey(result.date);
+        final existing = longestPerDate[key];
+
+        if (existing == null ||
+            result.totalSleepMinutes > existing.totalSleepMinutes) {
+          longestPerDate[key] = result;
+        }
+      }
+
+      final history = longestPerDate.values.toList();
 
       final targetHours = _parseHours(bedtimeTarget, wakeTarget);
 
