@@ -12,7 +12,7 @@ UPLOAD_DIR = BASE_DIR / "uploads"
 # Model Files
 # ==========================================
 
-BINARY_MODEL_NAME = "librosa_binary_baseline.keras"
+BINARY_MODEL_NAME = "librosa_binary_trial.keras"
 MULTILABEL_MODEL_NAME = "librosa_binary_adam_multi.keras"
 
 # ==========================================
