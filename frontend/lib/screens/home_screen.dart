@@ -94,10 +94,27 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
-                child: const Icon(
-                  Icons.person_rounded,
-                  size: 24,
-                  color: AppColors.foreground,
+                child: ClipOval(
+                  child: widget.state.profileImageUrl != null &&
+                          widget.state.profileImageUrl!.isNotEmpty
+                      ? Image.network(
+                          widget.state.profileImageUrl!,
+                          width: 40,
+                          height: 40,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) {
+                            return const Icon(
+                              Icons.person_rounded,
+                              size: 24,
+                              color: AppColors.foreground,
+                            );
+                          },
+                        )
+                      : const Icon(
+                          Icons.person_rounded,
+                          size: 24,
+                          color: AppColors.foreground,
+                        ),
                 ),
               ),
             ),

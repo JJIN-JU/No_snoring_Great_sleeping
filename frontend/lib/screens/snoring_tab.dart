@@ -444,11 +444,11 @@ class SnoringTab extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: StatCard(
-                icon: Icons.noise_control_off_rounded,
-                label: '평균 소음',
-                value: '${r.noiseDb.round()} dB',
-                sub: '마이크 측정',
-                color: AppColors.primary,
+                icon: Icons.repeat,
+                label: '발생 횟수',
+                value: '${r.snoreCount}회',
+                sub: r.totalSleepHours <= 0 ? '수면 연동 전' : '',
+                color: AppColors.gold,
               ),
             ),
           ],
@@ -456,44 +456,18 @@ class SnoringTab extends StatelessWidget {
 
         const SizedBox(height: 12),
 
-        Row(
-          children: [
-            Expanded(
-              child: StatCard(
-                icon: Icons.repeat,
-                label: '발생 횟수',
-                value: '${r.snoreCount}회',
-                sub: r.totalSleepHours <= 0 ? '수면 연동 전' : '시간당 $countPerHour회',
-                color: AppColors.gold,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: StatCard(
-                icon: Icons.waves,
-                label: '주파수',
-                value: r.snoreFreqHz <= 0 ? '분석 전' : '${r.snoreFreqHz} Hz',
-                sub: 'FFT 추가 예정',
-                color: AppColors.accent,
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 16),
-
         AppCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SectionTitle('시간대별 코골이/소음 강도'),
+              const SectionTitle('시간대별 코골이 강도'),
               const SizedBox(height: 8),
               if (timeline.isEmpty)
                 const SizedBox(
                   height: 180,
                   child: Center(
                     child: Text(
-                      '측정된 소음 기록이 없습니다.',
+                      '측정된 코골이 기록이 없습니다.',
                       style: TextStyle(
                         color: AppColors.muted,
                       ),
