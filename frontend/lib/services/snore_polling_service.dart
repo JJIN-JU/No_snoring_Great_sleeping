@@ -4,30 +4,20 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'snore_notification_service.dart';
+import '../config.dart';
 
-const String snoreBaseUrl =
-    'https://lets-literally-communicate-say.trycloudflare.com';
-
-final SnorePollingService snorePollingService = SnorePollingService(
-  baseUrl: snoreBaseUrl,
-);
+final SnorePollingService snorePollingService = SnorePollingService();
 
 class SnorePollingService {
-  final String baseUrl;
-
   Timer? _timer;
   int _lastAlertId = 0;
   bool _isFetching = false;
   bool _measurementActive = false;
 
-  SnorePollingService({
-    required this.baseUrl,
-  });
-
   void start() {
     _timer?.cancel();
 
-    print('코골이 알림 polling 시작: $baseUrl');
+    print('코골이 알림 polling 시작: ${AppConfig.baseUrl}');
 
     _fetchLatestAlert();
 
@@ -61,7 +51,7 @@ class SnorePollingService {
 
     try {
       final uri = Uri.parse(
-        '$baseUrl/alerts/snore/latest?last_id=$_lastAlertId',
+        '${AppConfig.baseUrl}/alerts/snore/latest?last_id=$_lastAlertId',
       );
 
       final response = await http.get(uri).timeout(

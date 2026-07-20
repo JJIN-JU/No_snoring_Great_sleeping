@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'kakao_auth_service.dart';
+import '../config.dart';
 
 class SavedUser {
   final String userId;
@@ -32,15 +33,11 @@ class SavedUser {
 }
 
 class AuthApiService {
-  static String get baseUrl {
-    return 'https://attitude-contamination-partially-coal.trycloudflare.com';
-  }
-
   Future<SavedUser> saveKakaoUser(KakaoLoginResult result) async {
     try {
       final response = await http
           .post(
-            Uri.parse('$baseUrl/auth/kakao'),
+            Uri.parse('${AppConfig.baseUrl}/auth/kakao'),
             headers: {
               'Content-Type': 'application/json',
             },
@@ -70,7 +67,7 @@ class AuthApiService {
       return SavedUser.fromJson(decoded['user']);
     } on TimeoutException {
       throw Exception(
-        '서버 연결 시간이 초과됐습니다. 백엔드가 켜져 있는지, 휴대폰에서 $baseUrl 접속이 되는지 확인해 주세요.',
+        '서버 연결 시간이 초과됐습니다. 백엔드가 켜져 있는지, 휴대폰에서 ${AppConfig.baseUrl} 접속이 되는지 확인해 주세요.',
       );
     } catch (e) {
       throw Exception('회원 정보 DB 저장 중 오류: $e');
@@ -81,7 +78,7 @@ class AuthApiService {
     try {
       final response = await http
           .delete(
-            Uri.parse('$baseUrl/auth/kakao/$kakaoId'),
+            Uri.parse('${AppConfig.baseUrl}/auth/kakao/$kakaoId'),
           )
           .timeout(const Duration(seconds: 8));
 
@@ -97,7 +94,7 @@ class AuthApiService {
         throw Exception('회원 정보 DB 삭제 실패');
       }
     } on TimeoutException {
-      throw Exception('서버 연결 시간이 초과됐습니다. 현재 주소: $baseUrl');
+      throw Exception('서버 연결 시간이 초과됐습니다. 현재 주소: ${AppConfig.baseUrl}');
     } catch (e) {
       throw Exception('회원 정보 DB 삭제 중 오류: $e');
     }
