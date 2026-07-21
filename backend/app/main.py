@@ -32,6 +32,8 @@ from app.database import (
 from app.realtime_manager import realtime_manager
 from app.config import SNORE_ALERT_COOLDOWN_SECONDS
 
+# 추가: 수면 태그 LLM 라우터
+from app.sleep_llm import router as sleep_llm_router
 app = FastAPI(
     title="ZZCare API",
     description="ZZCare 사용자 데이터 API",
@@ -46,6 +48,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 추가: 수면 태그 LLM API 연결
+app.include_router(sleep_llm_router)
 
 # =========================
 # 실시간/폴링 코골이 알림 설정

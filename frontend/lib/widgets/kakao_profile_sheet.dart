@@ -6,17 +6,35 @@ class KakaoProfileSheet extends StatelessWidget {
   final String fallbackUserName;
   final String? email;
   final String? profileImageUrl;
+
+  final VoidCallback onOpenSleepTags;
+  final VoidCallback onOpenAppInfo;
+
   final Future<void> Function() onLogout;
   final Future<void> Function() onWithdrawComplete;
 
   const KakaoProfileSheet({
     super.key,
     required this.fallbackUserName,
+    required this.onOpenSleepTags,
+    required this.onOpenAppInfo,
     required this.onLogout,
     required this.onWithdrawComplete,
     this.email,
     this.profileImageUrl,
   });
+
+  void _closeAndOpen(
+    BuildContext context,
+    VoidCallback openPage,
+  ) {
+    Navigator.pop(context);
+
+    Future<void>.delayed(
+      const Duration(milliseconds: 120),
+      openPage,
+    );
+  }
 
   Future<void> _handleLogout(BuildContext context) async {
     await onLogout();
@@ -40,7 +58,8 @@ class KakaoProfileSheet extends StatelessWidget {
             ),
           ),
           content: const Text(
-            '카카오 연결을 해제하고 로그아웃할까요?\n이 작업은 되돌릴 수 없습니다.',
+            '카카오 연결을 해제하고 로그아웃할까요?\n'
+            '이 작업은 되돌릴 수 없습니다.',
             style: TextStyle(
               color: AppColors.muted,
               height: 1.5,
@@ -48,11 +67,15 @@ class KakaoProfileSheet extends StatelessWidget {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
               child: const Text('취소'),
             ),
             TextButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
               child: const Text(
                 '탈퇴',
                 style: TextStyle(
@@ -66,7 +89,9 @@ class KakaoProfileSheet extends StatelessWidget {
       },
     );
 
-    if (confirmed != true) return;
+    if (confirmed != true) {
+      return;
+    }
 
     await onWithdrawComplete();
 
@@ -84,76 +109,119 @@ class KakaoProfileSheet extends StatelessWidget {
 
     return SafeArea(
       top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 42,
-              height: 4,
-              decoration: BoxDecoration(
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 42,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.border,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              CircleAvatar(
+                radius: 40,
+                backgroundColor: AppColors.cardAlt,
+                backgroundImage: hasProfileImage
+                    ? NetworkImage(profileImageUrl!)
+                    : null,
+                child: hasProfileImage
+                    ? null
+                    : const Icon(
+                        Icons.person,
+                        color: AppColors.foreground,
+                        size: 42,
+                      ),
+              ),
+
+              const SizedBox(height: 14),
+
+              Text(
+                fallbackUserName,
+                style: const TextStyle(
+                  color: AppColors.foreground,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+
+              const SizedBox(height: 6),
+
+              Text(
+                hasEmail ? email! : '카카오 계정으로 로그인됨',
+                style: const TextStyle(
+                  color: AppColors.muted,
+                  fontSize: 13,
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              _SheetButton(
+                icon: Icons.sell_outlined,
+                label: '내 수면 태그',
+                subtitle: '수면 특성 · 분석 근거 · PDF 결과서',
+                color: AppColors.primary,
+                onTap: () {
+                  _closeAndOpen(
+                    context,
+                    onOpenSleepTags,
+                  );
+                },
+              ),
+
+              const SizedBox(height: 10),
+
+              _SheetButton(
+                icon: Icons.info_outline_rounded,
+                label: '앱 정보',
+                subtitle: '버전 · 서비스 소개 · 약관 · 개인정보',
+                color: AppColors.accent,
+                onTap: () {
+                  _closeAndOpen(
+                    context,
+                    onOpenAppInfo,
+                  );
+                },
+              ),
+
+              const SizedBox(height: 18),
+
+              const Divider(
                 color: AppColors.border,
-                borderRadius: BorderRadius.circular(999),
+                height: 1,
               ),
-            ),
 
-            const SizedBox(height: 24),
+              const SizedBox(height: 18),
 
-            CircleAvatar(
-              radius: 40,
-              backgroundColor: AppColors.cardAlt,
-              backgroundImage: hasProfileImage
-                  ? NetworkImage(profileImageUrl!)
-                  : null,
-              child: hasProfileImage
-                  ? null
-                  : const Icon(
-                      Icons.person,
-                      color: AppColors.foreground,
-                      size: 42,
-                    ),
-            ),
-
-            const SizedBox(height: 14),
-
-            Text(
-              fallbackUserName,
-              style: const TextStyle(
+              _SheetButton(
+                icon: Icons.logout,
+                label: '로그아웃',
                 color: AppColors.foreground,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+                onTap: () {
+                  _handleLogout(context);
+                },
               ),
-            ),
 
-            const SizedBox(height: 6),
+              const SizedBox(height: 10),
 
-            Text(
-              hasEmail ? email! : '카카오 계정으로 로그인됨',
-              style: const TextStyle(
-                color: AppColors.muted,
-                fontSize: 13,
+              _SheetButton(
+                icon: Icons.delete_outline,
+                label: '회원 탈퇴',
+                color: AppColors.pink,
+                onTap: () {
+                  _handleWithdraw(context);
+                },
               ),
-            ),
-
-            const SizedBox(height: 24),
-
-            _SheetButton(
-              icon: Icons.logout,
-              label: '로그아웃',
-              color: AppColors.foreground,
-              onTap: () => _handleLogout(context),
-            ),
-
-            const SizedBox(height: 10),
-
-            _SheetButton(
-              icon: Icons.delete_outline,
-              label: '회원 탈퇴',
-              color: AppColors.pink,
-              onTap: () => _handleWithdraw(context),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -163,6 +231,7 @@ class KakaoProfileSheet extends StatelessWidget {
 class _SheetButton extends StatelessWidget {
   final IconData icon;
   final String label;
+  final String? subtitle;
   final Color color;
   final VoidCallback onTap;
 
@@ -171,6 +240,7 @@ class _SheetButton extends StatelessWidget {
     required this.label,
     required this.color,
     required this.onTap,
+    this.subtitle,
   });
 
   @override
@@ -182,7 +252,7 @@ class _SheetButton extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(
           horizontal: 16,
-          vertical: 15,
+          vertical: 14,
         ),
         decoration: BoxDecoration(
           color: AppColors.cardAlt,
@@ -196,18 +266,38 @@ class _SheetButton extends StatelessWidget {
             Icon(
               icon,
               color: color,
-              size: 20,
+              size: 21,
             ),
+
             const SizedBox(width: 12),
-            Text(
-              label,
-              style: TextStyle(
-                color: color,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
+
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle!,
+                      style: const TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
-            const Spacer(),
+
             Icon(
               Icons.chevron_right,
               color: color.withValues(alpha: 0.7),

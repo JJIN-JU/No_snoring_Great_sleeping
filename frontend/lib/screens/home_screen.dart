@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/kakao_profile_sheet.dart';
+import 'app_info_screen.dart';
 import 'explore_screen.dart';
 import 'sleep_tab.dart';
+import 'sleep_tag_screen.dart';
 import 'snoring_tab.dart';
 import 'stats_tab.dart';
 
@@ -23,6 +25,30 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
 
+  void _openSleepTagScreen() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) {
+          return SleepTagScreen(
+            state: widget.state,
+          );
+        },
+      ),
+    );
+  }
+
+  void _openAppInfoScreen() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) {
+          return const AppInfoScreen();
+        },
+      ),
+    );
+  }
+
   void _openProfileSheet() {
     showModalBottomSheet(
       context: context,
@@ -39,6 +65,8 @@ class _HomeScreenState extends State<HomeScreen> {
           fallbackUserName: widget.state.userName,
           email: widget.state.kakaoEmail,
           profileImageUrl: widget.state.profileImageUrl,
+          onOpenSleepTags: _openSleepTagScreen,
+          onOpenAppInfo: _openAppInfoScreen,
           onLogout: widget.state.logout,
           onWithdrawComplete: widget.state.withdraw,
         );
@@ -48,13 +76,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final titles = ['수면', '탐색', '코골이', '통계'];
+    final titles = [
+      '수면',
+      '탐험',
+      '코골이',
+      '통계',
+    ];
 
     final tabs = [
-      SleepTab(state: widget.state),
-      const ExploreScreen(),
-      SnoringTab(state: widget.state),
-      StatsTab(state: widget.state),
+      SleepTab(
+        state: widget.state,
+      ),
+      ExploreScreen(),
+      SnoringTab(
+        state: widget.state,
+      ),
+      StatsTab(
+        state: widget.state,
+      ),
     ];
 
     return Scaffold(
@@ -138,9 +177,9 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         child: NavigationBar(
           selectedIndex: _tab,
-          onDestinationSelected: (i) {
+          onDestinationSelected: (index) {
             setState(() {
-              _tab = i;
+              _tab = index;
             });
           },
           destinations: const [
@@ -164,7 +203,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Icons.explore,
                 color: AppColors.primary,
               ),
-              label: '탐색',
+              label: '탐험',
             ),
             NavigationDestination(
               icon: Icon(
