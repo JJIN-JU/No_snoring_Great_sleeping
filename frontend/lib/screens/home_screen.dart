@@ -83,19 +83,6 @@ class _HomeScreenState extends State<HomeScreen> {
       '통계',
     ];
 
-    final tabs = [
-      SleepTab(
-        state: widget.state,
-      ),
-      ExploreScreen(),
-      SnoringTab(
-        state: widget.state,
-      ),
-      StatsTab(
-        state: widget.state,
-      ),
-    ];
-
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -160,9 +147,27 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: IndexedStack(
-        index: _tab,
-        children: tabs,
+      body: ListenableBuilder(
+        listenable: widget.state,
+        builder: (context, _) {
+          final tabs = [
+            SleepTab(
+              state: widget.state,
+            ),
+            ExploreScreen(),
+            SnoringTab(
+              state: widget.state,
+            ),
+            StatsTab(
+              state: widget.state,
+            ),
+          ];
+
+          return IndexedStack(
+            index: _tab,
+            children: tabs,
+          );
+        },
       ),
       bottomNavigationBar: NavigationBarTheme(
         data: NavigationBarThemeData(

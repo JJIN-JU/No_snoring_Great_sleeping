@@ -229,85 +229,370 @@ class _StatsTabState extends State<StatsTab> {
   // =========================
 
   List<Widget> _monthlyCharts() {
-    final labels = monthlyRecords
-        .map(
-          (m) => m.label,
-        )
-        .toList();
+    final monthlyRecords = widget.state.monthlyRecords;
+
+    final labels = monthlyRecords.map((m) => m.label).toList();
 
     final sleepValues = monthlyRecords
-        .map(
-          (m) => _safeDouble(m.avgSleepHours),
-        )
-        .toList();
-
-    final noiseValues = monthlyRecords
-        .map(
-          (m) => _safeDouble(m.avgNoiseDb),
-        )
-        .toList();
-
-    final deficitValues = monthlyRecords
-        .map(
-          (m) => _safeDouble(m.avgDeficitHours),
-        )
+        .map((m) => _safeDouble(m.avgSleepHours))
         .toList();
 
     return [
-      _chartCard(
-        '월별 평균 수면 점수',
-        _scoreBarChart(
-          monthlyRecords
-              .map(
-                (m) => m.avgScore.clamp(0, 100),
-              )
-              .toList(),
-          labels,
-        ),
-      ),
+      _monthlySummarySection(monthlyRecords),
       const SizedBox(height: 16),
 
       _chartCard(
-        '월평균 수면 시간 (시간)',
-        _barChart(
+        '월평균 수면 시간 추세',
+        _monthlySleepLineChart(
           sleepValues,
           labels,
-          AppColors.accent,
-          maxY: max(
-            10,
-            _niceMax(sleepValues),
-          ),
         ),
       ),
       const SizedBox(height: 16),
 
-      _chartCard(
-        '월평균 소음 (dB)',
-        _lineChart(
-          noiseValues,
-          labels,
-          AppColors.pink,
-          maxY: max(
-            60,
-            _niceMax(noiseValues),
+      _monthlyComparisonCard(
+        title: '월평균 소음',
+        unit: 'dB',
+        color: AppColors.pink,
+        records: monthlyRecords,
+        valueOf: (record) => _safeDouble(record.avgNoiseDb),
+        maxValue: max(
+          60,
+          _niceMax(
+            monthlyRecords
+                .map((record) => _safeDouble(record.avgNoiseDb))
+                .toList(),
           ),
-        ),
+        ).toDouble(),
       ),
       const SizedBox(height: 16),
 
-      _chartCard(
-        '월평균 부족 수면 (시간)',
-        _barChart(
-          deficitValues,
-          labels,
-          AppColors.orange,
-          maxY: max(
-            3,
-            _niceMax(deficitValues),
+      _monthlyComparisonCard(
+        title: '월평균 부족 수면',
+        unit: '시간',
+        color: AppColors.orange,
+        records: monthlyRecords,
+        valueOf: (record) => _safeDouble(record.avgDeficitHours),
+        maxValue: max(
+          3,
+          _niceMax(
+            monthlyRecords
+                .map((record) => _safeDouble(record.avgDeficitHours))
+                .toList(),
           ),
-        ),
+        ).toDouble(),
       ),
     ];
+  }
+
+  Widget _monthlySummarySection(
+    List<MonthlyRecord> records,
+  ) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionTitle('최근 3개월 요약'),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              for (var i = 0; i < records.length; i++) ...[
+                Expanded(
+                  child: _monthlySummaryCard(
+                    record: records[i],
+                    previous: i > 0 ? records[i - 1] : null,
+                  ),
+                ),
+                if (i != records.length - 1)
+                  const SizedBox(width: 8),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _monthlySummaryCard({
+    required MonthlyRecord record,
+    MonthlyRecord? previous,
+  }) {
+    final score = record.avgScore.clamp(0, 100);
+    final difference = previous == null
+        ? null
+        : score - previous.avgScore.clamp(0, 100);
+
+    final scoreColor = ScoreGrade.of(score).color;
+
+    IconData? trendIcon;
+    Color trendColor = AppColors.muted;
+    String trendText = '';
+
+    if (difference != null) {
+      if (difference > 0) {
+        trendIcon = Icons.trending_up_rounded;
+        trendColor = AppColors.accent;
+        trendText = '+$difference';
+      } else if (difference < 0) {
+        trendIcon = Icons.trending_down_rounded;
+        trendColor = AppColors.orange;
+        trendText = '$difference';
+      } else {
+        trendIcon = Icons.remove_rounded;
+        trendText = '0';
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 12,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.card.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppColors.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            record.label,
+            style: const TextStyle(
+              color: AppColors.muted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Flexible(
+                child: Text(
+                  '$score',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: scoreColor,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                    height: 1,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 2),
+              const Padding(
+                padding: EdgeInsets.only(bottom: 2),
+                child: Text(
+                  '점',
+                  style: TextStyle(
+                    color: AppColors.muted,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${record.avgSleepHours.toStringAsFixed(1)}시간',
+            style: const TextStyle(
+              color: AppColors.foreground,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: 16,
+            child: difference == null
+                ? const Text(
+                    '기준 월',
+                    style: TextStyle(
+                      color: AppColors.muted,
+                      fontSize: 10,
+                    ),
+                  )
+                : Row(
+                    children: [
+                      Icon(
+                        trendIcon,
+                        size: 13,
+                        color: trendColor,
+                      ),
+                      const SizedBox(width: 2),
+                      Flexible(
+                        child: Text(
+                          '$trendText점',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: trendColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _monthlySleepLineChart(
+    List<double> values,
+    List<String> labels,
+  ) {
+    final maxValue = max(
+      10,
+      _niceMax(values),
+    ).toDouble();
+
+    return LineChart(
+      LineChartData(
+        minY: 0,
+        maxY: maxValue,
+        gridData: _grid(2),
+        titlesData: _titles(labels, 2),
+        borderData: FlBorderData(show: false),
+        lineTouchData: LineTouchData(
+          touchTooltipData: LineTouchTooltipData(
+            getTooltipItems: (spots) {
+              return spots.map((spot) {
+                return LineTooltipItem(
+                  '${spot.y.toStringAsFixed(1)}시간',
+                  const TextStyle(
+                    color: AppColors.foreground,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                );
+              }).toList();
+            },
+          ),
+        ),
+        lineBarsData: [
+          LineChartBarData(
+            spots: [
+              for (var i = 0; i < values.length; i++)
+                FlSpot(
+                  i.toDouble(),
+                  values[i].clamp(0, maxValue),
+                ),
+            ],
+            isCurved: true,
+            curveSmoothness: 0.25,
+            color: AppColors.accent,
+            barWidth: 4,
+            dotData: FlDotData(
+              show: true,
+              getDotPainter: (
+                spot,
+                percent,
+                barData,
+                index,
+              ) {
+                return FlDotCirclePainter(
+                  radius: 5,
+                  color: AppColors.accent,
+                  strokeWidth: 3,
+                  strokeColor: AppColors.card,
+                );
+              },
+            ),
+            belowBarData: BarAreaData(
+              show: true,
+              color: AppColors.accent.withValues(alpha: 0.12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _monthlyComparisonCard({
+    required String title,
+    required String unit,
+    required Color color,
+    required List<MonthlyRecord> records,
+    required double Function(MonthlyRecord) valueOf,
+    required double maxValue,
+  }) {
+    final safeMaxValue = maxValue <= 0 ? 1.0 : maxValue;
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SectionTitle(title),
+          const SizedBox(height: 16),
+          for (var i = 0; i < records.length; i++) ...[
+            _monthlyProgressRow(
+              label: records[i].label,
+              value: valueOf(records[i]),
+              unit: unit,
+              color: color,
+              maxValue: safeMaxValue,
+            ),
+            if (i != records.length - 1)
+              const SizedBox(height: 14),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _monthlyProgressRow({
+    required String label,
+    required double value,
+    required String unit,
+    required Color color,
+    required double maxValue,
+  }) {
+    final normalized = (value / maxValue).clamp(0.0, 1.0).toDouble();
+
+    return Row(
+      children: [
+        SizedBox(
+          width: 34,
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.muted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 10,
+              value: normalized,
+              backgroundColor: AppColors.border,
+              valueColor: AlwaysStoppedAnimation<Color>(color),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        SizedBox(
+          width: 64,
+          child: Text(
+            '${value.toStringAsFixed(1)}$unit',
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: AppColors.foreground,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   // =========================

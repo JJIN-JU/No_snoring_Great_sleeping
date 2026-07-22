@@ -124,6 +124,54 @@ class SnoringTab extends StatelessWidget {
       return;
     }
 
+    // 오늘 코골이 리포트가 이미 있으면 무조건 덮어쓰지 않고
+    // 사용자에게 재측정 여부를 확인한다.
+    if (state.hasTodaySnoreReport) {
+      final overwrite = await showDialog<bool>(
+        context: context,
+        builder: (_) {
+          return AlertDialog(
+            backgroundColor: AppColors.card,
+            title: const Text(
+              '오늘 기록을 다시 측정할까요?',
+              style: TextStyle(
+                color: AppColors.foreground,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            content: const Text(
+              '측정을 완료하면 오늘의 기존 코골이 리포트가 '
+              '새 측정 결과로 교체됩니다. 이전 날짜의 기록은 변경되지 않습니다.',
+              style: TextStyle(
+                color: AppColors.muted,
+                height: 1.5,
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('취소'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text(
+                  '재측정',
+                  style: TextStyle(
+                    color: AppColors.pink,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (overwrite != true) {
+        return;
+      }
+    }
+
     await state.startMeasuring();
   }
 
