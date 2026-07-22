@@ -401,7 +401,9 @@ class SnoringTab extends StatelessWidget {
 
         // =========================
         // AI 판별 결과 디버그 표시
+        // 필요 시 아래 주석을 해제하면 화면에 다시 표시할 수 있다.
         // =========================
+        /*
         if (state.snoreAiDebugText != null)
           AppCard(
             child: Column(
@@ -422,6 +424,7 @@ class SnoringTab extends StatelessWidget {
           ),
 
         if (state.snoreAiDebugText != null) const SizedBox(height: 16),
+        */
 
         // =========================
         // 측정 전 안내
