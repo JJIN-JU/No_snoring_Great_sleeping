@@ -106,8 +106,16 @@ class _StatsTabState extends State<StatsTab> {
   // =========================
 
   List<Widget> _dailyCharts() {
-    // 최근 7개 기록을 오래된 순서부터 표시
+    // 실제 수면 데이터가 있는 최근 7개 기록만 오래된 순서부터 표시한다.
+    // _ensureTodayRecordExists()가 만든 빈 오늘 기록이나
+    // 코골이만 측정된 수면 미연동 기록은 수면 통계에서 제외한다.
     final recs = widget.state.records
+        .where(
+          (record) =>
+              record.totalSleepHours > 0 &&
+              !record.totalSleepHours.isNaN &&
+              !record.totalSleepHours.isInfinite,
+        )
         .take(7)
         .toList()
         .reversed
@@ -982,6 +990,8 @@ class _StatsTabState extends State<StatsTab> {
         borderData: FlBorderData(
           show: false,
         ),
+        // 곡선이나 채움 영역이 차트 경계 밖으로 나가지 않도록 자른다.
+        clipData: const FlClipData.all(),
         lineBarsData: [
           LineChartBarData(
             spots: [
@@ -996,7 +1006,8 @@ class _StatsTabState extends State<StatsTab> {
                   ),
                 ),
             ],
-            isCurved: true,
+            // 0dB처럼 낮은 값 사이에서 곡선 보간이 음수로 내려가는 것을 방지한다.
+            isCurved: false,
             color: color,
             barWidth: 3,
             dotData: FlDotData(

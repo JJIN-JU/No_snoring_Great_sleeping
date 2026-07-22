@@ -34,7 +34,10 @@ class SnoreDailySummary {
     final clipsRaw = json['snore_audio_clips'];
 
     return SnoreDailySummary(
-      date: DateTime.tryParse(json['date']?.toString() ?? '') ?? DateTime.now(),
+      // 서버의 날짜는 시간대 변환을 하지 않고 연-월-일만 그대로 사용한다.
+      // 2026-07-13T00:00:00Z 같은 값도 한국 시간 변환으로
+      // 전날/다음 날이 되지 않도록 날짜 부분만 직접 파싱한다.
+      date: _parseDateOnly(json['date']),
       avgSnoreDb: _toDouble(json['avg_snore_db']),
       maxSnoreDb: _toDouble(json['max_snore_db']),
       snoreHours: _toDouble(json['snore_hours']),
@@ -86,6 +89,34 @@ class SnoreDailySummary {
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
+
+  static DateTime _parseDateOnly(dynamic value) {
+    final raw = value?.toString().trim() ?? '';
+
+    if (raw.length >= 10) {
+      final datePart = raw.substring(0, 10);
+      final parts = datePart.split('-');
+
+      if (parts.length == 3) {
+        final year = int.tryParse(parts[0]);
+        final month = int.tryParse(parts[1]);
+        final day = int.tryParse(parts[2]);
+
+        if (year != null && month != null && day != null) {
+          return DateTime(year, month, day);
+        }
+      }
+    }
+
+    final parsed = DateTime.tryParse(raw);
+
+    if (parsed != null) {
+      return DateTime(parsed.year, parsed.month, parsed.day);
+    }
+
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
+  }
 }
 
 class SnoreHistoryService {
@@ -101,11 +132,12 @@ class SnoreHistoryService {
           headers: const {'Content-Type': 'application/json'},
           body: jsonEncode({
             'user_id': userId,
-            'date': DateTime(
-              record.date.year,
-              record.date.month,
-              record.date.day,
-            ).toIso8601String(),
+            // 시간대가 없는 날짜 문자열로 저장하여
+            // 서버와 앱 모두 같은 날짜 키를 사용한다.
+            'date':
+                '${record.date.year.toString().padLeft(4, '0')}-'
+                '${record.date.month.toString().padLeft(2, '0')}-'
+                '${record.date.day.toString().padLeft(2, '0')}',
             'avg_snore_db': record.avgSnoreDb,
             'max_snore_db': record.maxSnoreDb,
             'snore_hours': record.snoreHours,
