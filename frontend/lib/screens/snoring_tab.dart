@@ -200,6 +200,57 @@ class SnoringTab extends StatelessWidget {
     await state.startMeasuring();
   }
 
+  Future<void> _showAiResult(BuildContext context) async {
+    final resultText = state.snoreAiDebugText;
+
+    if (resultText == null || resultText.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('표시할 AI 판별 결과가 없습니다.'),
+        ),
+      );
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          backgroundColor: AppColors.card,
+          title: const Text(
+            'AI 판별 결과',
+            style: TextStyle(
+              color: AppColors.foreground,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: 420,
+              maxHeight: 420,
+            ),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                resultText,
+                style: const TextStyle(
+                  color: AppColors.muted,
+                  fontSize: 12,
+                  height: 1.45,
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('닫기'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final r = state.current;
@@ -361,7 +412,9 @@ class SnoringTab extends StatelessWidget {
                         ? '저장 중...'
                         : isMeasuring
                             ? '측정 종료'
-                            : '수면 측정 시작',
+                            : state.hasTodaySnoreReport
+                                ? '수면 재측정'
+                                : '수면 측정 시작',
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.bold,
@@ -369,6 +422,30 @@ class SnoringTab extends StatelessWidget {
                   ),
                 ),
               ),
+              if (state.snoreAiDebugText != null) ...[
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: InkWell(
+                    onTap: () => _showAiResult(context),
+                    borderRadius: BorderRadius.circular(8),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
+                      child: Text(
+                        'AI',
+                        style: TextStyle(
+                          color: AppColors.muted,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
