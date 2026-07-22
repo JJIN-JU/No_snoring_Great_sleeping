@@ -724,7 +724,11 @@ class AppState extends ChangeNotifier {
       if (lastError != null) {
         snoreError = '코골이 AI 판별 실패: $lastError';
       } else {
-        snoreError = 'AI가 코골이로 판단한 5초 녹음이 없습니다. 아래 AI 판별 결과를 확인해보세요.';
+        // 일반 사용자 화면에는 AI 디버그 안내 문구를 표시하지 않는다.
+        // 상세 결과는 snoreAiDebugText에 유지되며 숨겨진 AI 버튼에서 확인한다.
+        // snoreError =
+        //     'AI가 코골이로 판단한 5초 녹음이 없습니다. 아래 AI 판별 결과를 확인해보세요.';
+        snoreError = null;
       }
 
       await _deleteLocalClipFiles(rawResult.audioClips);
