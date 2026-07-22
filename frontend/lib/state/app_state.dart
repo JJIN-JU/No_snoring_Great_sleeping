@@ -1089,12 +1089,10 @@ class AppState extends ChangeNotifier {
       snoreFreqHz: snoreResult.snoreFreqHz,
       snoreCount: snoreResult.snoreCount,
       noiseDb: snoreResult.noiseDb,
-      snoreTimeline: snoreResult.snoreTimeline.isEmpty
-          ? old.snoreTimeline
-          : snoreResult.snoreTimeline,
-      snoreAudioClips: snoreResult.audioClips.isEmpty
-          ? old.snoreAudioClips
-          : snoreResult.audioClips,
+      // 재측정 결과는 비어 있더라도 오늘의 기존 결과를 완전히 교체한다.
+      // 새 측정에서 코골이가 0건이면 이전 타임라인/녹음도 남기지 않는다.
+      snoreTimeline: snoreResult.snoreTimeline,
+      snoreAudioClips: snoreResult.audioClips,
       stages: old.stages,
     );
 
