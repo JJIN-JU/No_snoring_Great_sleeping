@@ -275,7 +275,7 @@ class AppState extends ChangeNotifier {
 
       // 같은 날짜에 여러 수면 세션(낮잠 + 밤잠 등)이 있으면
       // 가장 긴 세션만 그 날짜의 대표 수면 기록으로 사용한다.
-      final Map<String, dynamic> longestPerDate = {};
+      final Map<String, HealthSleepSummary> longestPerDate = {};
 
       for (final result in rawHistory) {
         final key = _dateKey(result.date);
@@ -287,7 +287,8 @@ class AppState extends ChangeNotifier {
         }
       }
 
-      final history = longestPerDate.values.toList();
+      final List<HealthSleepSummary> history =
+          longestPerDate.values.toList();
 
       final targetHours = _parseHours(bedtimeTarget, wakeTarget);
 
@@ -310,8 +311,8 @@ class AppState extends ChangeNotifier {
             ? (old?.wakeActual ?? wakeTarget)
             : _formatTime(result.wakeTime!);
 
-        final stages = result.stages.isNotEmpty
-            ? result.stages.map((stage) {
+        final List<SleepStage> stages = result.stages.isNotEmpty
+            ? result.stages.map<SleepStage>((stage) {
                 return SleepStage(
                   stage.name,
                   stage.minutes,
