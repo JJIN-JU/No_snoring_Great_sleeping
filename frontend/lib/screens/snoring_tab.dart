@@ -56,20 +56,45 @@ class SnoringTab extends StatelessWidget {
   }
 
   String _formatSnoreTime(double snoreHours) {
-    final totalMinutes = (snoreHours * 60).round();
-
-    if (totalMinutes <= 0) {
-      return '0분';
+    if (snoreHours.isNaN || snoreHours.isInfinite || snoreHours <= 0) {
+      return '0초';
     }
 
-    final hours = totalMinutes ~/ 60;
-    final minutes = totalMinutes % 60;
+    final totalSeconds = (snoreHours * 3600).round();
 
-    if (hours <= 0) {
+    if (totalSeconds <= 0) {
+      return '0초';
+    }
+
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+      if (minutes > 0 && seconds > 0) {
+        return '$hours시간 $minutes분 $seconds초';
+      }
+
+      if (minutes > 0) {
+        return '$hours시간 $minutes분';
+      }
+
+      if (seconds > 0) {
+        return '$hours시간 $seconds초';
+      }
+
+      return '$hours시간';
+    }
+
+    if (minutes > 0) {
+      if (seconds > 0) {
+        return '$minutes분 $seconds초';
+      }
+
       return '$minutes분';
     }
 
-    return '$hours시간 $minutes분';
+    return '$seconds초';
   }
 
   Future<void> _toggleMeasure(BuildContext context) async {
