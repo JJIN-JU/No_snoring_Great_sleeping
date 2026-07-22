@@ -6,8 +6,7 @@ class ApiServerManager {
   ApiServerManager._();
 
   static const List<String> _serverUrls = [
-    // 팀 공용 서버
-    'https://lets-literally-communicate-say.trycloudflare.com',
+    // 팀 공용 서버 'https://lets-literally-communicate-say.trycloudflare.com',
 
     // 현재 개인 서버
     'https://owen-curious-scenic-ron.trycloudflare.com',
