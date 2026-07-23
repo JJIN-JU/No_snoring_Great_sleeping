@@ -137,7 +137,7 @@ class HealthConnectService {
 
     // 밤 개수(nights)보다 넉넉하게 과거로 조회한다.
     // (하루 이틀 측정이 비어있는 경우를 대비해 +7일 여유를 둔다)
-    final start = now.subtract(Duration(days: nights + 7));
+    final start = now.subtract(Duration(days: nights + 23));
     final end = now.add(const Duration(minutes: 1));
 
     var points = await _health.getHealthDataFromTypes(
@@ -166,7 +166,7 @@ class HealthConnectService {
 
     if (points.isEmpty) {
       throw Exception(
-        '최근 Health Connect에 수면 데이터가 없습니다. 삼성 헬스에서 Health Connect 동기화를 먼저 확인해 주세요.',
+        '최근 30일간 Health Connect에 수면 데이터가 없습니다. 삼성 헬스에서 Health Connect 동기화를 먼저 확인해 주세요.',
       );
     }
 
