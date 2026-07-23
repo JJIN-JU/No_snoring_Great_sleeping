@@ -95,7 +95,7 @@ class SnoreMeasureService {
 
   /// AI 판별용으로 5초 단위 녹음 파일을 만든다.
   /// 학습 데이터(5초, 48000Hz, 스테레오)와 스펙을 맞춤.
-  static const Duration segmentDuration = Duration(seconds: 5);
+  static const Duration segmentDuration = Duration(seconds: 3);
 
   /// 그래프 점 저장 간격.
   static const Duration timelineInterval = Duration(seconds: 30);
