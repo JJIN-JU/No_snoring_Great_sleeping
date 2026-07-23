@@ -717,7 +717,7 @@ class AppState extends ChangeNotifier {
     SnoreMeasureResult rawResult,
   ) async {
     if (rawResult.audioClips.isEmpty) {
-      snoreAiDebugText = 'AI 판별 결과: 분석할 5초 녹음 조각이 없습니다. 최소 6초 이상 측정해보세요.';
+      snoreAiDebugText = 'AI 판별 결과: 분석할 3초 녹음 조각이 없습니다. 최소 4초 이상 측정해보세요.';
       return rawResult;
     }
 
@@ -884,9 +884,9 @@ class AppState extends ChangeNotifier {
       return 0;
     }
 
-    // AI 모델은 5초 파일을 1초 단위 5개로 투표하므로,
-    // 화면/통계에는 AI 판별 창 길이를 최대 5초로 표시한다.
-    return seconds > 5 ? 5 : seconds;
+    // AI 모델은 3초 파일을 1초 단위 3개로 투표하므로,
+    // 화면/통계에는 AI 판별 창 길이를 최대 3초로 표시한다.
+    return seconds > 3 ? 3 : seconds;
   }
 
   SnoreMeasureResult _buildResultWithAiClips({
