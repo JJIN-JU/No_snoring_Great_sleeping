@@ -68,6 +68,11 @@ class AppState extends ChangeNotifier {
 
   DateTime? _lastSnoreNotificationAt;
 
+  // 측정 중 이미 완료된 AI 판별 결과를 보관한다.
+  // 측정 종료 시 모든 녹음 조각을 서버에 다시 보내지 않기 위해 사용한다.
+  final Map<String, _LiveAiClipResult> _liveAiResults = {};
+  final Set<Future<void>> _pendingLiveAiTasks = {};
+
   bool get stoppingMeasurement => _stoppingMeasurement;
   bool get snoreRecording => _snoreMeasureService.isRunning;
 
@@ -371,10 +376,32 @@ class AppState extends ChangeNotifier {
         );
       }).toList();
 
+      // Health Connect에 수면 기록이 없는 날짜라도
+      // 기존 코골이 측정 결과는 지우지 않고 유지한다.
+      final newDateKeys = newRecords
+          .map((record) => _dateKey(record.date))
+          .toSet();
+
+      final snoreOnlyRecords = oldByDate.values.where((record) {
+        final key = _dateKey(record.date);
+
+        final hasSnoreData = record.snoreCount > 0 ||
+            record.snoreHours > 0 ||
+            record.avgSnoreDb > 0 ||
+            record.maxSnoreDb > 0 ||
+            record.noiseDb > 0 ||
+            record.snoreTimeline.isNotEmpty ||
+            record.snoreAudioClips.isNotEmpty;
+
+        return !newDateKeys.contains(key) && hasSnoreData;
+      }).toList();
+
       _records
         ..clear()
-        ..addAll(newRecords);
+        ..addAll(newRecords)
+        ..addAll(snoreOnlyRecords);
 
+      _sortRecordsNewestFirst();
       _ensureTodayRecordExists();
 
       selectedIndex = 0;
@@ -456,6 +483,8 @@ class AppState extends ChangeNotifier {
       snoreError = null;
       snoreAiDebugText = null;
       _lastSnoreNotificationAt = null;
+      _liveAiResults.clear();
+      _pendingLiveAiTasks.clear();
 
       measuring = true;
       _stoppingMeasurement = false;
@@ -480,10 +509,17 @@ class AppState extends ChangeNotifier {
 
       await _snoreMeasureService.start(
         onClipReady: (clip) {
-          return _classifyClipAndNotifyDuringMeasurement(
+          late final Future<void> task;
+
+          task = _classifyClipAndNotifyDuringMeasurement(
             clip,
             token,
-          );
+          ).whenComplete(() {
+            _pendingLiveAiTasks.remove(task);
+          });
+
+          _pendingLiveAiTasks.add(task);
+          return task;
         },
       );
 
@@ -519,9 +555,8 @@ class AppState extends ChangeNotifier {
     _stoppingMeasurement = true;
     measuring = false;
 
-    // 이미 날아간 실시간 AI 요청이 늦게 돌아와도 결과/알림을 추가하지 못하게 무효화.
-    _measureSessionToken++;
-
+    // 새 측정은 _stoppingMeasurement로 막혀 있으므로,
+    // 측정 중 이미 시작된 AI 요청은 잠시 기다려 결과를 재사용한다.
     _timer?.cancel();
     _timer = null;
 
@@ -541,6 +576,19 @@ class AppState extends ChangeNotifier {
     }
 
     try {
+      // 측정 중 진행된 AI 요청이 끝날 시간을 잠깐 준다.
+      // 오래 걸리거나 끊긴 요청은 15초 후 포기하고,
+      // 아직 판별되지 않은 마지막 조각만 종료 단계에서 추가 판별한다.
+      if (_pendingLiveAiTasks.isNotEmpty) {
+        try {
+          await Future.wait(
+            List<Future<void>>.from(_pendingLiveAiTasks),
+          ).timeout(const Duration(seconds: 15));
+        } catch (_) {}
+      }
+
+      _measureSessionToken++;
+
       final snoreResult = await _classifyTop5SnoreClips(rawSnoreResult);
 
       updateTodaySnoreData(
@@ -575,7 +623,13 @@ class AppState extends ChangeNotifier {
       measuredElapsed = Duration.zero;
       _measureStartedAt = null;
     } catch (e) {
-      snoreError = '측정 결과 AI 판별에 실패했습니다: $e';
+      final previousDebug = snoreAiDebugText?.trim();
+
+      snoreAiDebugText = previousDebug == null || previousDebug.isEmpty
+          ? 'AI 판별 오류\n$e'
+          : '$previousDebug\n\nAI 판별 오류\n$e';
+
+      snoreError = null;
     } finally {
       _stoppingMeasurement = false;
       notifyListeners();
@@ -586,7 +640,7 @@ class AppState extends ChangeNotifier {
     SnoreAudioClip clip,
     int token,
   ) async {
-    if (!measuring || _stoppingMeasurement || token != _measureSessionToken) {
+    if (token != _measureSessionToken) {
       return;
     }
 
@@ -603,35 +657,57 @@ class AppState extends ChangeNotifier {
         return;
       }
 
-      if (!measuring || _stoppingMeasurement || token != _measureSessionToken) {
-        return;
-      }
-
       final result = await AIService().predict(
         userId: userId!,
         wavFile: file,
         save: false,
       );
 
+      if (token != _measureSessionToken) {
+        return;
+      }
+
       final snoringProbability = _snoringDisplayProbability(result);
       final isSnoring = _isAiSnoringResult(result);
-      
       final votesText = _votesText(result);
+      final noiseText = _noiseLabelsText(result['noise']);
+      final aiWindowSeconds = _aiDisplayDurationSeconds(clip);
 
-      debugPrint(
-        '실시간 3초 조각 AI 판별: ${clip.time} / '
-        '최종확률 ${snoringProbability.toStringAsFixed(4)} '
-        '$votesText / '
-        '${isSnoring ? '코골이 O' : '코골이 X'}',
+      final debugLine =
+          '${clip.time} / AI ${aiWindowSeconds}초 / '
+          '평균 ${clip.avgDb.toStringAsFixed(1)}dB / '
+          '최대 ${clip.maxDb.toStringAsFixed(1)}dB / '
+          'AI확률 ${snoringProbability.toStringAsFixed(4)} '
+          '$votesText / '
+          '판정 ${isSnoring ? '코골이 O' : '코골이 X'} / '
+          'noise: $noiseText';
+
+      _liveAiResults[clip.path] = _LiveAiClipResult(
+        clip: clip,
+        probability: snoringProbability,
+        isSnoring: isSnoring,
+        debugLine: debugLine,
       );
 
-      if (isSnoring) {
+      debugPrint('실시간 AI 판별 완료: $debugLine');
+
+      // 저장 중에는 진동 알림을 울리지 않고 결과만 보관한다.
+      if (isSnoring && measuring && !_stoppingMeasurement) {
         await _notifySnoringIfNeeded(result);
       }
     } catch (e) {
-      if (!measuring || _stoppingMeasurement || token != _measureSessionToken) {
+      if (token != _measureSessionToken) {
         return;
       }
+
+      _liveAiResults[clip.path] = _LiveAiClipResult(
+        clip: clip,
+        probability: 0,
+        isSnoring: false,
+        debugLine:
+            '${clip.time} / AI ${_aiDisplayDurationSeconds(clip)}초 / AI 호출 실패: $e',
+        error: e,
+      );
 
       debugPrint('실시간 코골이 AI 판별 실패: $e');
     }
@@ -646,7 +722,7 @@ class AppState extends ChangeNotifier {
     }
 
     if (userId == null || userId!.isEmpty) {
-      snoreError = '코골이 AI 판별을 하려면 카카오 로그인이 필요합니다.';
+      snoreError = null;
       snoreAiDebugText =
           'AI 판별 불가: userId가 없습니다. 카카오 로그인과 DB 사용자 저장을 먼저 확인하세요.';
 
@@ -667,7 +743,30 @@ class AppState extends ChangeNotifier {
 
     for (var i = 0; i < rawResult.audioClips.length; i++) {
       final clip = rawResult.audioClips[i];
+      final cached = _liveAiResults[clip.path];
 
+      if (cached != null) {
+        debugLines.add('${i + 1}. ${cached.debugLine}');
+
+        if (cached.error != null) {
+          lastError = cached.error;
+        }
+
+        if (cached.isSnoring) {
+          detected.add(
+            _ClassifiedSnoreClip(
+              index: i,
+              clip: clip,
+              probability: cached.probability,
+            ),
+          );
+        }
+
+        continue;
+      }
+
+      // 측정 종료 직전에 만들어진 마지막 조각처럼
+      // 실시간 판별이 없었던 파일만 여기서 한 번 추가 판별한다.
       try {
         final file = File(clip.path);
 
@@ -721,15 +820,14 @@ class AppState extends ChangeNotifier {
           '백엔드 AI 판정 결과\n\n'
           '${debugLines.join('\n')}';
 
+      // AI 연결 실패나 판별 상세 오류는 일반 화면에 표시하지 않는다.
+      // 상세 내용은 숨겨진 AI 버튼에서 확인한다.
       if (lastError != null) {
-        snoreError = '코골이 AI 판별 실패: $lastError';
-      } else {
-        // 일반 사용자 화면에는 AI 디버그 안내 문구를 표시하지 않는다.
-        // 상세 결과는 snoreAiDebugText에 유지되며 숨겨진 AI 버튼에서 확인한다.
-        // snoreError =
-        //     'AI가 코골이로 판단한 5초 녹음이 없습니다. 아래 AI 판별 결과를 확인해보세요.';
-        snoreError = null;
+        snoreAiDebugText = '$snoreAiDebugText\n\n'
+            '연결 오류 상세\n$lastError';
       }
+
+      snoreError = null;
 
       await _deleteLocalClipFiles(rawResult.audioClips);
 
@@ -764,29 +862,13 @@ class AppState extends ChangeNotifier {
       selectedClips: selectedClips,
     );
 
-    for (final item in selected) {
-      try {
-        final file = File(item.clip.path);
-
-        if (!await file.exists()) {
-          continue;
-        }
-
-        await aiService.predict(
-          userId: userId!,
-          wavFile: file,
-          save: true,
-        );
-      } catch (e) {
-        lastError = e;
-      }
-    }
-
+    // 측정 중 이미 AI 판별을 완료했으므로 TOP 5 파일을 /predict로
+    // 다시 업로드하지 않는다. 일일 요약은 /snore-summaries에 한 번만 저장한다.
     if (lastError != null) {
-      snoreError = '일부 코골이 AI 판별 또는 DB 저장 실패: $lastError';
-    } else {
-      snoreError = null;
+      debugPrint('일부 실시간 AI 판별 실패: $lastError');
     }
+
+    snoreError = null;
 
     return _buildResultWithAiClips(
       rawResult: rawResult,
@@ -1357,6 +1439,22 @@ class AppState extends ChangeNotifier {
     _snoreMeasureService.cancel();
     super.dispose();
   }
+}
+
+class _LiveAiClipResult {
+  final SnoreAudioClip clip;
+  final double probability;
+  final bool isSnoring;
+  final String debugLine;
+  final Object? error;
+
+  const _LiveAiClipResult({
+    required this.clip,
+    required this.probability,
+    required this.isSnoring,
+    required this.debugLine,
+    this.error,
+  });
 }
 
 class _ClassifiedSnoreClip {

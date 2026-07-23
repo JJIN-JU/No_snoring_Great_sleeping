@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:health/health.dart';
 
 class HealthSleepStage {
@@ -146,6 +147,22 @@ class HealthConnectService {
     );
 
     points = _health.removeDuplicates(points);
+
+    // 수면 세션은 들어오는데 단계만 비는 문제를 확인하기 위한 타입별 로그.
+    final typeCounts = <HealthDataType, int>{};
+
+    for (final point in points) {
+      typeCounts.update(
+        point.type,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+
+    debugPrint(
+      'Health Connect 수면 데이터 타입별 개수: '
+      '${typeCounts.entries.map((e) => '${e.key.name}=${e.value}').join(', ')}',
+    );
 
     if (points.isEmpty) {
       throw Exception(
@@ -321,8 +338,38 @@ class HealthConnectService {
     List<HealthDataPoint> points, {
     required bool hasSession,
   }) {
+    // 삼성헬스의 수면 단계 포인트가 SLEEP_SESSION 경계보다
+    // 수 분~수십 분 바깥으로 기록되는 경우가 있어 단계 데이터만
+    // 앞뒤 90분의 여유 범위에서 다시 포함한다.
+    final stageWindowStart = windowStart.subtract(
+      const Duration(minutes: 90),
+    );
+    final stageWindowEnd = windowEnd.add(
+      const Duration(minutes: 90),
+    );
+
     final relatedPoints = points.where((point) {
-      return _overlaps(point.dateFrom, point.dateTo, windowStart, windowEnd);
+      final isDetailedStage = point.type == HealthDataType.SLEEP_ASLEEP ||
+          point.type == HealthDataType.SLEEP_LIGHT ||
+          point.type == HealthDataType.SLEEP_DEEP ||
+          point.type == HealthDataType.SLEEP_REM ||
+          point.type == HealthDataType.SLEEP_AWAKE;
+
+      if (isDetailedStage) {
+        return _overlaps(
+          point.dateFrom,
+          point.dateTo,
+          stageWindowStart,
+          stageWindowEnd,
+        );
+      }
+
+      return _overlaps(
+        point.dateFrom,
+        point.dateTo,
+        windowStart,
+        windowEnd,
+      );
     }).toList();
 
     DateTime? bedtime;
@@ -336,11 +383,17 @@ class HealthConnectService {
     double awakeMinutes = 0;
 
     for (final point in relatedPoints) {
+      final isDetailedStage = point.type == HealthDataType.SLEEP_ASLEEP ||
+          point.type == HealthDataType.SLEEP_LIGHT ||
+          point.type == HealthDataType.SLEEP_DEEP ||
+          point.type == HealthDataType.SLEEP_REM ||
+          point.type == HealthDataType.SLEEP_AWAKE;
+
       final minutes = _overlapMinutes(
         point.dateFrom,
         point.dateTo,
-        windowStart,
-        windowEnd,
+        isDetailedStage ? stageWindowStart : windowStart,
+        isDetailedStage ? stageWindowEnd : windowEnd,
       );
 
       if (minutes <= 0) continue;
@@ -411,6 +464,16 @@ class HealthConnectService {
 
     // 이 밤을 어느 날짜로 표시할지는 기상 시각(wakeTime) 기준으로 정한다.
     final refDate = wakeTime ?? windowEnd;
+
+    debugPrint(
+      '수면 요약 ${refDate.year}-${refDate.month}-${refDate.day}: '
+      'session=${sessionMinutes.toStringAsFixed(1)}분, '
+      'asleep=${asleepMinutes.toStringAsFixed(1)}분, '
+      'light=${lightMinutes.toStringAsFixed(1)}분, '
+      'deep=${deepMinutes.toStringAsFixed(1)}분, '
+      'rem=${remMinutes.toStringAsFixed(1)}분, '
+      'awake=${awakeMinutes.toStringAsFixed(1)}분',
+    );
 
     return HealthSleepSummary(
       date: DateTime(refDate.year, refDate.month, refDate.day),
