@@ -17,34 +17,6 @@ class SnoringTab extends StatelessWidget {
     required this.state,
   });
 
-  int _safeSnorePercent(double snoreHours, double totalSleepHours) {
-    if (totalSleepHours <= 0 || snoreHours.isNaN || totalSleepHours.isNaN) {
-      return 0;
-    }
-
-    final value = snoreHours / totalSleepHours * 100;
-
-    if (value.isNaN || value.isInfinite) {
-      return 0;
-    }
-
-    return value.round();
-  }
-
-  int _safeCountPerHour(int count, double totalSleepHours) {
-    if (totalSleepHours <= 0 || totalSleepHours.isNaN) {
-      return 0;
-    }
-
-    final value = count / totalSleepHours;
-
-    if (value.isNaN || value.isInfinite) {
-      return 0;
-    }
-
-    return value.round();
-  }
-
   String _formatElapsed(Duration duration) {
     final hours = duration.inHours;
     final minutes = duration.inMinutes % 60;
@@ -259,15 +231,6 @@ class SnoringTab extends StatelessWidget {
     final isStopping = state.stoppingMeasurement;
     final isMeasureActive = isMeasuring || isStopping;
 
-    final snorePercent = _safeSnorePercent(
-      r.snoreHours,
-      r.totalSleepHours,
-    );
-
-    final countPerHour = _safeCountPerHour(
-      r.snoreCount,
-      r.totalSleepHours,
-    );
 
     final hasReport = r.snoreCount > 0 ||
         r.snoreHours > 0 ||
@@ -567,16 +530,6 @@ class SnoringTab extends StatelessWidget {
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 6),
-              Text(
-                r.totalSleepHours <= 0
-                    ? '수면 데이터 연동 전'
-                    : '전체 수면의 $snorePercent% 차지',
-                style: const TextStyle(
-                  color: AppColors.pink,
-                  fontSize: 12,
-                ),
-              ),
             ],
           ),
         ),
@@ -613,14 +566,14 @@ class SnoringTab extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SectionTitle('시간대별 코골이 강도'),
+              const SectionTitle('시간대별 수면 소음'),
               const SizedBox(height: 8),
               if (timeline.isEmpty)
                 const SizedBox(
                   height: 180,
                   child: Center(
                     child: Text(
-                      '측정된 코골이 기록이 없습니다.',
+                      '측정된 수면 소음 기록이 없습니다.',
                       style: TextStyle(
                         color: AppColors.muted,
                       ),
