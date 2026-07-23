@@ -67,62 +67,81 @@ class SleepTab extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SectionTitle('수면 단계'),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Row(
-                  children: r.stages
-                      .map(
-                        (s) => Expanded(
-                          flex: s.minutes.round().clamp(1, 100000),
-                          child: Container(
-                            height: 16,
-                            color: s.color,
-                          ),
-                        ),
-                      )
-                      .toList(),
-                ),
-              ),
-              const SizedBox(height: 14),
-              ...r.stages.map(
-                (s) {
-                  final percent = totalStage <= 0
-                      ? 0
-                      : (s.minutes / totalStage * 100).round();
-
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            color: s.color,
-                            borderRadius: BorderRadius.circular(3),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          s.name,
-                          style: const TextStyle(
-                            color: AppColors.foreground,
-                            fontSize: 13,
-                          ),
-                        ),
-                        const Spacer(),
-                        Text(
-                          '${_fmt(s.minutes / 60)}  ($percent%)',
-                          style: const TextStyle(
-                            color: AppColors.muted,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+              if (r.stages.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: Text(
+                      r.totalSleepHours <= 0
+                          ? '아직 수면 기록이 없어요.'
+                          : '이 기록은 수면 단계 정보를 제공하지 않아요.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 13,
+                        height: 1.5,
+                      ),
                     ),
-                  );
-                },
-              ),
+                  ),
+                )
+              else ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Row(
+                    children: r.stages
+                        .map(
+                          (s) => Expanded(
+                            flex: s.minutes.round().clamp(1, 100000),
+                            child: Container(
+                              height: 16,
+                              color: s.color,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                ...r.stages.map(
+                  (s) {
+                    final percent = totalStage <= 0
+                        ? 0
+                        : (s.minutes / totalStage * 100).round();
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: s.color,
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            s.name,
+                            style: const TextStyle(
+                              color: AppColors.foreground,
+                              fontSize: 13,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${_fmt(s.minutes / 60)}  ($percent%)',
+                            style: const TextStyle(
+                              color: AppColors.muted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
             ],
           ),
         ),
